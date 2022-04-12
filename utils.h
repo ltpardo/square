@@ -136,14 +136,14 @@ public:
 	void OutHeaderDirect(int cnt, int wd = 2) {
 		*pOut << "      ";
 		for (int j = 0; j < cnt; j++) {
-			*pOut << " " << setw(wd) << j;
+			*pOut << " " << dec << setw(wd) << j;
 		}
 		*pOut << endl;
 	}
 
 	void OutRowNum(int r) {
 		if (r >= 0)
-			*pOut << "[" << setw(2) << r << "]  ";
+			*pOut << "[" << dec << setw(2) << r << "]  ";
 		else
 			*pOut << "      ";
 	}
@@ -159,7 +159,7 @@ public:
 	}
 
 	void OutPair(char desc, int v, int wd) {
-		*pOut << desc << setw(wd - 1) << v;
+		*pOut << desc << dec << setw(wd - 1) << v;
 	}
 
 	void OutStr(const char *str) {
@@ -167,7 +167,7 @@ public:
 	}
 
 	void OutVal(int v, int wd) {
-		*pOut << setw(wd) << v;
+		*pOut << dec << setw(wd) << v;
 	}
 
 	void EndLine() { *pOut << endl;  }
