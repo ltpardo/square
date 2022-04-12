@@ -1,7 +1,7 @@
 #include "senv.h"
 
 using namespace std;
-
+#if 0
 void SLane::Init(int _n, int _idx) {
 	n = _n;
 	idx = _idx;
@@ -173,6 +173,7 @@ bool SLane::VerifyPerm()
 
 	return success;
 }
+#endif
 
 #if 0
 #if 0
@@ -236,7 +237,6 @@ void SLane::HistoScan(SLane*& Rows, FastMatrix<6, u8>& Mat)
 		cout << " CNT ERROR  histo " << histoCnt << " != scan " << scanCnt;
 	cout << endl;
 }
-#endif
 
 //   Fill initial values:
 //		pBlank->laneMiss	with row missing set
@@ -640,3 +640,4 @@ void SolveEnv::Backtrack()
 		}
 	}
 }
+#endif

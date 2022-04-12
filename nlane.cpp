@@ -13,6 +13,8 @@ void NLane::Init(int _n, int _idx, bool _isRow)
 	stops = 0;
 	blankCnt = 0;
 	ringHd.SelfLink();
+	ringHd.dLevel = 0;
+	ringHd.rLevel = NEntry::RLEVELNULL;
 	isRow = _isRow;
 }
 
@@ -229,7 +231,6 @@ bool NLane::NextPermAdvCur()
 	return false;
 }
 
-
 bool NLane::NextPermInCol()
 {
 	while (pCur->ThIsValid()) {
@@ -256,6 +257,276 @@ bool NLane::NextPermInCol()
 	}
 
 	// Column has been exhausted
+	return false;
+}
+
+bool NLane::RedStartFind()
+{
+	redStartDepth = DIMMAX;
+	rLevel = RLevelCalc(idx, isRow);
+	if (isRow) {		// Rows
+		// Skip entries in previous lanes
+		for (pCurRedStart = NStack[0].pEnt;
+			pCurRedStart->j < idx;
+			pCurRedStart = pCurRedStart->dnCross)
+		{
+			if (pCurRedStart->crLast) {
+				// Tail-empty row
+				pCurRedStart = NULL;
+				prevOverlap = false;
+				return false;
+			}
+		}
+		// Overlap when pCurRedStart is on diagonal
+		prevOverlap = pCurRedStart->j == idx;
+		// Skip overlap entry for rows
+		if (prevOverlap) {
+			// Skip overlap with col, if not last
+			if (!pCurRedStart->crLast)
+				pCurRedStart = pCurRedStart->dnCross;
+		}
+		if (pCurRedStart->crLast) {
+			// Tail-empty row
+			pCurRedStart = NULL;
+			return false;
+		}
+		redStartDepth = pCurRedStart->crLvl;
+		pCurRedStart->crStart = true;
+		assert(pCurRedStart->j > pCurRedStart->i);
+	}
+	else {			// Cols
+		// Skip entries in previous lanes
+		for (pCurRedStart = NStack[0].pEnt;
+			pCurRedStart->i < idx;
+			pCurRedStart = pCurRedStart->dnThru)
+		{
+			if (pCurRedStart->thLast) {
+				prevOverlap = false;
+				pCurRedStart = NULL;
+				return false;
+			}
+		}
+		// Overlap when previous row starts at col
+		prevOverlap = pCurRedStart->upThru->i == idx;
+		redStartDepth = pCurRedStart->thLvl;
+		pCurRedStart->thStart = true;
+		assert(pCurRedStart->i >= pCurRedStart->j);
+	}
+
+	return true;
+}
+
+void NLane::RedBackSet(NLane* Rows, NLane* Cols)
+{
+	NEntry* pEnt;
+	NLane* pPrevLane;
+	NEntry* pPrevLink = NULL;
+	int utl;
+	int ucl;
+
+	for (int d = redStartDepth; d < blankCnt; d++) {
+		pEnt = NStack[d].pEnt;
+		pEnt->rLevel = rLevel;
+		if (idx == 0) {
+			// Top level lane: no backtrack possible
+			pEnt->SetRedTop();
+			continue;
+		}
+
+		pPrevLane = LaneFromLevel(rLevel - 1, Rows, Cols);
+		if (prevOverlap) {
+			// Backtrack to start of previous level
+			pEnt->SetRed(rLevel - 1, pPrevLane->redStartDepth);
+			goto BackCheck;
+		}
+
+		if (isRow) {
+			if (pEnt->upThru->rLevel == rLevel - 2) {
+				// Backtrack to entry above
+				pEnt->SetRed(rLevel - 2, pEnt->upThru->crLvl);
+				pPrevLink = pEnt;   // this is the new prevLink
+				goto BackCheck;
+			}
+		}
+		else {
+			if (pEnt->upCross->rLevel == rLevel - 2) {
+				// Backtrack to entry to the left
+				pEnt->SetRed(rLevel - 2, pEnt->upCross->thLvl);
+				pPrevLink = pEnt;   // this is the new prevLink
+				goto BackCheck;
+			}
+		}
+		
+		if (pPrevLink != NULL) {
+			// Backtrack to previous link
+			pEnt->SetRed(pPrevLink->redBackLvl, pPrevLink->redBackDepth);
+			goto BackCheck;
+		}
+
+		// No prevLink, no overlap: backtrack to closest precursor
+		utl = pEnt->upCross->rLevel;
+		ucl = pEnt->upThru->rLevel;
+		if (ucl == NEntry::RLEVELNULL && utl == NEntry::RLEVELNULL) {
+			// Starting Node: backtrack to previous level and restart node
+			//pEnt->SetRed(rLevel - 1, pPrevLane->redStartDepth);
+			pEnt->SetRedTop();
+			//pPrevLink = pEnt;
+			continue;
+		}
+		else if (ucl > utl) {
+			// Row is closest
+			pEnt->SetRed(ucl, pEnt->upThru->crLvl);
+			pPrevLink = pEnt;
+		}
+		else {
+			// Col is closer
+			pEnt->SetRed(utl, pEnt->upCross->thLvl);
+			pPrevLink = pEnt;
+		}
+
+	BackCheck:
+		NLane* pBackLane = LaneFromLevel(pEnt->redBackLvl, Rows, Cols);
+		NEntry* pBackEnt = pBackLane->NStack[pEnt->redBackDepth].pEnt;
+		assert(pBackLane->EntryInRLevel(pBackEnt));
+	}
+}
+
+void NLane::NextPermRedRestart()
+{
+	pCur = pCurRedStart;
+	pCur->ESt.CntNullSet();
+	pCur->iCnt = 0;
+	pTermReturn = NULL;
+	if (isRow) {
+		pCur->crUpBr = pCur->upCross->crDnBr;
+		pCur->crDnBr = PermSet::LVLNULL;
+	}
+	else {
+		pCur->thUpBr = pCur->upThru->thDnBr;
+		pCur->thDnBr = PermSet::LVLNULL;
+	}
+
+	redDepth = 0;
+	redSuccess = false;
+}
+
+void NLane::NextPermRedFailed(int fDepth)
+{
+	int curDepth = isRow ? pCur->crLvl : pCur->thLvl;
+	if (fDepth < curDepth)
+		pCur = NStack[fDepth].pEnt;
+}
+
+bool NLane::NextPermRedRow()
+{
+	for (; ; ) {
+		if (pCur->j <= idx) {
+			cerr << "ROW TRESPASS idx " << idx << " j: " << pCur->j << endl;
+		}
+		if (redDepth < pCur->crLvl)
+			redDepth = pCur->crLvl;
+
+		if (!NextPermRedDnRow()) {
+			if (pCur == pCurRedStart)
+				// Current iteration exhausted
+				return false;
+			if (pCur->j <= pCurRedStart->j)
+				cerr << "ROW SKIP" << endl;
+
+			pCur = pCur->CrClimbUp(pTermReturn);
+			continue;
+		}
+		pCur->RowAdvCross();
+
+		if (pCur->crLast) {
+			// Success: prepare for next iteration and return true
+			pCur = pCur->CrClimbUp(pTermReturn);
+			redSuccess = true;
+			return true;
+		}
+		else {
+			pCur = pCur->CrClimbDown();
+		}
+	}
+
+	// Unreachable: Row has been exhausted
+	return false;
+}
+
+bool NLane::NextPermRedDnRow()
+{
+	if (pCur->crDnBr != PermSet::LVLNULL)
+		// Work has been done by previous expand
+		return true;
+	if (!pCur->ESt.IsStkEmpty()) {
+		// Pull branches
+		if (!pCur->ESt.Pull(pCur->thDnBr, pCur->crDnBr))
+			pCur->ESt.CntNullSet();
+		return true;
+	}
+	if (pCur->crUpBr != PermSet::LVLNULL) {
+		// Expand 
+		return pCur->DExpand(pTermReturn, true);
+	}
+	// No possible advance
+	return false;
+}
+
+bool NLane::NextPermRedCol()
+{
+	for( ; ; ) {
+		if (pCur->i < idx) {
+			cerr << "COL TRESPASS idx " << idx << " i: " << pCur->i << endl;
+		}
+		if (redDepth < pCur->thLvl)
+			redDepth = pCur->thLvl;
+
+		if (!NextPermRedDnCol()) {
+			if (pCur->i < pCurRedStart->i) {
+				cerr << "COL SKIP idx " << idx << " i: " << pCur->i << endl;
+			}
+			if (pCur == pCurRedStart)
+				// Current iteration exhausted
+				return false;
+
+			pCur = pCur->ThClimbUp(pTermReturn);
+			continue;
+		}
+
+		pCur->ColAdvCross();
+
+		if (pCur->thLast) {
+			// Success: prepare for next iteration and return true
+			pCur = pCur->ThClimbUp(pTermReturn);
+			redSuccess = true;
+			return true;
+		}
+		else {
+			pCur = pCur->ThClimbDown();
+		}
+	}
+
+	// Unreachable: Column has been exhausted
+	return false;
+}
+
+bool NLane::NextPermRedDnCol()
+{
+	if (pCur->thDnBr != PermSet::LVLNULL)
+		// Work has been done by previous expand
+		return true;
+	if (!pCur->ESt.IsStkEmpty()) {
+		// Pull branches
+		if (!pCur->ESt.Pull(pCur->thDnBr, pCur->crDnBr))
+			pCur->ESt.CntNullSet();
+		return true;
+	}
+
+	if (pCur->thUpBr != PermSet::LVLNULL) {
+		// Expand 
+		return pCur->DExpand(pTermReturn, false);
+	}
+	// No possible advance
 	return false;
 }
 
@@ -377,7 +648,6 @@ int NLane::PermRefCreate()
 	return refCnt;
 }
 
-
 bool NLane::PermRefGen(int level, Mask sel, ShortCnt& cnt)
 {
 	Mask chosenBit;
@@ -414,307 +684,3 @@ bool NLane::PermRefGen(int level, Mask sel, ShortCnt& cnt)
 
 	return notEmpty;
 }
-
-#if 0
-// Returns lnk to node and node cnt
-//	Input: lane lMissing and stack[level].lMiss
-//
-u16 NLane::PermSetGen(int level, LMask sel, u16& cnt)
-{
-	if (level < 0)
-		// Done
-		return level;
-
-	u16 branch;
-	if (level == PSet.depthTerm) {
-		// Generate terminals
-		branch = PSet.TermStart(lMissing & (~sel));
-		PermSetGenTerminals(level, sel);
-		if ((cnt = PSet.TermEnd()) > 0)
-			return branch;
-		else
-			return PermSet::LNKNULL;
-	}
-
-	LMask chosenBit;
-	LMask unsel = lMissing & (~sel);
-	LMask choice = NStack[level].lMiss & unsel;
-	LMask nextSel;
-
-	if (choice == 0)
-		// Exhausted branch
-		return PermSet::LNKNULL;
-
-	// Internal branch: iterate through all descendants
-	u16 nodeCnt = 0;
-	u16* pTemp = PSet.NodeStart(level);
-	u16 vMask = 0;
-
-	do {
-		// Extract candidate from choiceSet
-		chosenBit = choice & (~choice + 1);
-		choice &= ~chosenBit;
-		nextSel = sel | chosenBit;
-
-		// Intermediate level - tree zone
-		u16 branchCnt;
-		if ((branch = PermSetGen(level + 1, nextSel, branchCnt)) == PermSet::LNKNULL)
-			// Branch is not viable
-			continue;
-		nodeCnt += branchCnt;
-		vMask |= chosenBit;
-		pTemp = PSet.NodeBranch(pTemp, branchCnt, branch);
-	} while (choice != 0);
-
-	// Create tree node and return
-	cnt = nodeCnt;
-	return PSet.NodeEnd(level, pTemp, nodeCnt, vMask);
-}
-
-// Returns lnk to node and node cnt
-//
-bool NLane::PermSetGenTerminals(int level, LMask sel)
-{
-	LMask unsel = lMissing & (~sel);
-	LMask choice = NStack[level].lMiss & unsel;
-	if (choice == 0)
-		// Exhausted branch
-		return false;
-
-	LMask chosenBit;
-	LMask nextSel;
-	LMask botUnsel;
-
-	bool success = false;
-	do {
-		// Extract candidate from choiceSet
-		chosenBit = choice & (~choice + 1);
-		choice &= ~chosenBit;
-		nextSel = sel | chosenBit;
-		PSet.TermEncode(level, chosenBit);
-
-		if (level >= missCnt - 2) {
-			// Next level is bottom: create terminal if viable
-			botUnsel = lMissing & (~nextSel);
-			assert(__popcnt16(botUnsel) == 1);    // Only one candidate should remain
-
-			if ((NStack[level + 1].lMiss & botUnsel) == botUnsel) {
-				// Bottom choice is OK
-				PSet.TermOut();
-				success = true;
-			}
-			else
-				// Bottom choice is not viable
-				continue;
-		}
-		else {
-			// Intermediate level - term zone
-			if (!PermSetGenTerminals(level + 1, nextSel))
-				// Branch is not viable
-				continue;
-			success = true;
-		}
-	} while (choice != 0);
-
-	return success;
-}
-
-
-
-// Insert blanks into corresponding row ring
-void NLane::LinkBlanks(NLane* Rows)
-{
-	for (int d = 0; d < blankCnt; d++) {
-		pBlank = NStack[d].pEnt;
-		pBlank->UpThruOf(&Rows[pBlank->i].ringHd);
-		Rows[pBlank->i].stops += Set::BitMask(pBlank->j);
-	}
-}
-
-bool NLane::PermuteStart()
-{
-	// First level has 
-	level = 0;
-	pBlank = NStack[level].pEnt;
-	pBlank->selectedSet = 0;			// CountOne selected set
-	pBlank->unSelected = absMiss;		// All missing vals are needed
-	pBlank->choiceSet = pBlank->miss;	// Choose from all available candidates
-
-	return true;
-}
-
-void NLane::PermuteContinueAt(int depth)
-{
-	level = depth;
-	pBlank = NStack[level].pEnt;
-}
-
-// Computes next permutation in column
-//   Returns false if column has exhausted all permutations
-//   firstPermLvl is level of first change from previous permutation (-1 if exhausted)
-//
-int NLane::PermuteStep()
-{
-	firstPermLvl = level;
-
-	while (level >= 0) {
-		// Entering level
-		if (pBlank->choiceSet == 0) {				// Exhausted branch
-			// Climb up
-			pBlank = NStack[--level].pEnt;
-		}
-		else {
-			// Extract candidate from choiceSet
-			pBlank->ExtractBestChoice();
-
-			// Update firstLvl
-			if (firstPermLvl > level)
-				firstPermLvl = level;
-
-			// Branch has a candidate
-			if (level > missCnt) {
-				// Bottom branch: found a permutation
-				assert(pBlank->choiceSet == 0);		//   Only one candidate should remain...
-
-				// Climb up
-				pBlank = NStack[--level].pEnt;
-				return 1;
-			}
-			else {
-				// Not bottom branch: add chosenBit to selected set for next level
-				Mask nextselSet = pBlank->selectedSet | pBlank->chosenBit;
-				// ... and proceed down
-				pBlank = NStack[++level].pEnt;
-				pBlank->selectedSet = nextselSet;
-				pBlank->unSelected = absMiss - pBlank->selectedSet;
-				pBlank->choiceSet = pBlank->miss & pBlank->unSelected;
-			}
-		}
-	}
-
-	// No more permutations for this pass
-	firstPermLvl = -1;
-	return 0;
-}
-
-bool NLane::LvlContains(int lvl, u8 val)
-{
-	if (IsSingleRange())
-		return val == SingleV[lvl];
-	else {
-		return false;
-		//return PSet.LvlGetBranch(lvl, NStack[lvl].nodeLnk, val);
-	}
-
-}
-
-void NLane::PermThruEnterSingle()
-{
-}
-
-bool NLane::PermThruEnterLvl()
-{
-	pBlank = NStack[level].pEnt;
-	NLane* pCross = pBlank->pCross;
-	int crossLvl = pBlank->crLvl;
-	LvlBranch branch = NStack[level].enterBranch;
-
-	if (PSet.LvlIsTerm(branch)) {
-		NStack[level].selV = PSet.LvlExtractV(branch);
-		if (!pCross->LvlContains(crossLvl, NStack[level].selV))
-			return false;
-		NStack[level].branch = branch;
-		return true;
-	}
-	else if (pCross->IsSingleRange()) {
-		u8 v = pCross->SingleV[crossLvl];
-		if (LvlContains(level, v))
-			return false;
-		PermThruEnterSingle();
-		return true;
-	}
-	else {
-		// Both lanes have multiple branches: intersect
-		LvlBranch* pThNode = PSet.BranchPtr(level, branch);
-		LvlBranch* pCrNode =
-			pCross->PSet.BranchPtr(crossLvl, pCross->NStack[crossLvl].enterBranch);
-		lCnt = PSet.LvlIntersect(pThNode, pCrNode);
-		if (lCnt == 0)
-			return false;
-		if (lCnt == 1) {
-			NStack[level].selV = PSet.LvlGetV(PSet.Branches[0]);
-			NStack[level].branch = PSet.Branches[0];
-		}
-		else {
-			PermThruSort();
-		}
-		return true;
-	}
-
-	// Enter level
-	return true;
-}
-
-void NLane::PermThruSort()
-{
-}
-
-void NLane::PermThruUp()
-{
-	PermThruEnterLvl();
-
-}
-
-void NLane::PermThruDown()
-{
-
-}
-
-bool NLane::PermThruBranch()
-{
-
-	return true;
-}
-
-void NLane::PermThruSuccess()
-{
-
-}
-
-void PermThruStart()
-{
-
-}
-
-bool NLane::PermThruAdv()
-{
-	while (level >= 0) {
-		if (NStack[level].IsEmpty()) {
-			if (!PermThruEnterLvl()) {
-				level--;
-				continue;
-			}
-		}
-
-		if (!PermThruBranch())
-			// Unsuccessful branch: continue at this level
-			continue;
-
-		// Successful branch
-		if (level >= missCnt - 1) {
-			PermThruSuccess();
-			return true;
-		}
-		else {
-			level++;
-			NStack[level].SetEmpty();
-			//NStack[level].nodeLnk = ?;
-		}
-	}
-
-	// No more permutations for this pass
-	firstPermLvl = -1;
-	return false;
-}
-#endif
-

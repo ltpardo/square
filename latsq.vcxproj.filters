@@ -15,15 +15,6 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="latsq.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="senv.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="senvxtra.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="console.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -42,14 +33,11 @@
     <ClCompile Include="nentry.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="main.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="latsq.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="senv.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="basic.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -72,6 +60,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="nlane.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="sets.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

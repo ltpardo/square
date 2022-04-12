@@ -9,6 +9,11 @@ public:
 	SolveStkEnt() {}
 	SolveStkEnt(LvlBranch _thBr, LvlBranch _crBr) : thBr(_thBr), crBr(_crBr) {}
 
+	void Set(LvlBranch _thBr, LvlBranch _crBr) {
+		thBr = _thBr;
+		crBr = _crBr;
+	}
+
 	LvlBranch thBr;
 	LvlBranch crBr;
 
@@ -55,19 +60,107 @@ public:
 
 extern SolveStack SStk;
 
+class EState {
+public:
+	EState() : Opt(0), st (ST_VOID), cnt(0), head(0) {}
+
+	void Reset() {
+		Opt = 0;
+		st = ST_VOID;
+		TabReset();
+	}
+
+	Set Opt;
+
+	enum {
+		BRSNEWBIT = 0,
+		BRSNEWMASK = 1 << BRSNEWBIT,
+		CNTNULLBIT = 1,
+		CNTNULLMASK = 1 << CNTNULLBIT,
+		EXPANDEDBIT = 2,
+		EXPANDEDMASK = 1 << EXPANDEDBIT,
+
+		CRNEWBIT = 16,
+		CRNEWMASK = 1 << CRNEWBIT,
+		THNEWBIT = 17,
+		THNEWMASK = 1 << THNEWBIT,
+	};
+
+	enum {
+		ST_VOID = 0,
+		ST_EXPAND = BRSNEWMASK | CNTNULLMASK | ~EXPANDEDMASK,
+		ST_PULL = ~BRSNEWMASK | ~CNTNULLMASK | EXPANDEDMASK,
+		ST_DONE = ~BRSNEWMASK | CNTNULLMASK | EXPANDEDMASK,
+	};
+	
+	int st;
+
+	bool IsBrsNew() { return (st & BRSNEWMASK) != 0; }
+	bool IsCntNull() { return (st & CNTNULLMASK) != 0; }
+	bool IsExpanded() { return (st & EXPANDEDMASK) != 0; }
+
+	void BrNewSet() { st |= BRSNEWMASK; }
+	void CntNullSet() {
+		st |= CNTNULLMASK;
+		TabReset();
+	}
+	void ExpandedSet() { st |= EXPANDEDMASK; }
+
+	void BrNewReset() { st &= ~BRSNEWMASK; }
+	void CntNullReset() { st &= ~CNTNULLMASK; }
+	void ExpandedReset() { st &= ~EXPANDEDMASK; }
+
+	bool IsCrNew() { return (st & CRNEWMASK) != 0; }
+	bool IsThNew() { return (st & THNEWMASK) != 0; }
+	void CrNewSet() { st |= CRNEWMASK; }
+	void ThNewSet() { st |= THNEWMASK; }
+	void CrNewReset() { st &= ~CRNEWMASK; }
+	void ThNewReset() { st &= ~THNEWMASK; }
+
+	SolveStkEnt Tab[BLANKCNTMAX];
+	int cnt;
+	int head;
+
+	void TabReset() {
+		cnt = 0;
+		head = 0;
+	}
+
+	bool IsStkEmpty() { return head >= cnt; }
+
+	bool Push(LvlBranch thBr, LvlBranch crBr) {
+		assert(cnt < BLANKCNTMAX);
+		Tab[cnt].Set(thBr, crBr);
+		cnt++;
+		return true;
+	}
+
+	bool Pull(LvlBranch &thBr, LvlBranch &crBr) {
+		assert(head < cnt);
+		thBr = Tab[head].thBr;
+		crBr = Tab[head].crBr;
+		head++;
+		return head < cnt;
+	}
+};
+
 class NEntry : public LogClient {
 public:
 	NEntry() : upThru(0), dnThru(0), upCross(0), dnCross(0),
 		miss(0), missCnt(0), selV(0xFF), i(-1), j(-1),
 		thLast(false), crLast(false),
-		stkPos(SHRT_MIN), iCnt(-DIMMAX)
+		thStart(false), crStart(false),
+		stkPos(SHRT_MIN), iCnt(-DIMMAX),
+		dLevel(INT_MIN), dLvlPos(INT_MIN), backPos(INT_MIN)
 	{}
 
 	const int INVALIDPOS = SHRT_MIN;
 	NEntry(int _i, int _j) : upThru(0), dnThru(0), upCross(0), dnCross(0),
 		miss(0), missCnt(0), selV(0xFF), i(_i), j(_j),
 		thLast(false), crLast(false),
-		stkPos(INVALIDPOS), iCnt(INVALIDPOS)
+		thStart(false), crStart(false),
+		stkPos(INVALIDPOS), iCnt(INVALIDPOS),
+		dLevel(INT_MIN), dLvlPos(INT_MIN), backPos(INT_MIN)
 	{}
 
 	// Linking: 
@@ -106,9 +199,9 @@ public:
 	u8 missV[BLANKCNTMAX];	// Expansion of miss
 	u8 selV;				// Search value chosen
 
-	bool thLast;
-	bool crLast;
-	
+	bool thStart, crStart;	// (Reduction) Lanes start here
+	bool thLast, crLast;	// Lanes end here
+
 	// Coords: correspond to thru and cross lane indices
 	int i, j;
 	void SetCoords(int _i, int _j) { i = _i; j = _j; }
@@ -125,6 +218,7 @@ public:
 	u8 iCnt;				// Number of branches in intersection
 	Set ThSet;				// Unused selects from thUpBr
 	Set crUnSel;			// Previously unselected set (cross)
+	Set thUnSel;			// Previously unselected set (thru)
 
 	void InitSearchInfo(PermSet* _pThPSet, PermSet* _pCrPSet) {
 		pThPSet = _pThPSet;
@@ -147,14 +241,24 @@ public:
 	void CrSetExhausted() { crDnBr = PermSet::LVLNULL; }
 
 	bool ThFirstEnt() { return thUpBr == 0; }
+	bool CrFirstEnt() { return crUpBr == 0; }
+	bool ThStarts() { return thStart; }
+	bool CrStarts() { return crStart; }
 	bool ThExpand(NEntry* &pReturn);
-	bool ThTermReturn(NEntry* &pReturn);
+	bool ThTermReturn(NEntry*& pReturn);
+	bool CrTermReturn(NEntry*& pReturn);
 
-	NEntry* ThClimbUp(NEntry* &pReturn);
+	NEntry* ThClimbUp(NEntry*& pReturn);
 	NEntry* ThClimbDown();
 	bool ThAdvCross();
 
-	void DumpExpand();
+	NEntry* CrClimbUp(NEntry*& pReturn);
+	NEntry* CrClimbDown();
+
+	bool ColAdvCross();
+	bool RowAdvCross();
+
+	void DumpExpand(bool isRow = false);
 
 	inline void StkPos() {
 		stkPos = SStk.GetTopPos();
@@ -176,41 +280,47 @@ public:
 	}
 
 	bool StkCheckSet(Set& set);
+
+	// Search distance ring
+	int dLevel;
+	int dLvlPos;
+	int backPos;		// Backtrack entry position
+	NEntry* pDist;
+	EState ESt;
+
+	bool DExpand(NEntry*& pReturn, bool isRow = false);
+	bool DProcess(BitSet* pBSet);
+
+	// Reduction
+	int rLevel;
+
+	// Reduction backtrack
+	int redBackLvl;
+	int redBackDepth;
+	static const int RLEVELNULL = -1;
+	static const int RDEPTHRESTART = -1;
+
+	inline void SetRed(int lvl, int dp) {
+		redBackLvl = lvl;
+		redBackDepth = dp;
+	}
+
+	inline void SetRedRestart(int lvl) {
+		redBackLvl = lvl;
+		redBackDepth = RDEPTHRESTART;
+	}
+
+	inline void SetRedTop() {
+		redBackLvl = RLEVELNULL;
+		redBackDepth = RDEPTHRESTART;
+	}
+
+	inline bool IsRedTop() {
+		return redBackLvl == RLEVELNULL && redBackDepth == RDEPTHRESTART;
+	}
+	inline bool IsRedRestart() { return redBackDepth == RDEPTHRESTART;  }
 };
 
-class InterStack {
-public:
-	InterStack(int _size) : size(_size) {
-		Pool = new IntStkEnt[size];
-		topFree = 0;
-	}
-
-	~InterStack() {
-		delete Pool;
-	}
-
-	int size;
-	int topFree;
-
-	typedef u8 IntStkEnt;
-
-	inline void Push(IntStkEnt v) {
-		assert(topFree < size);
-		Pool[topFree++] = v;
-	}
-
-	inline IntStkEnt Pop() {
-		assert(topFree > 0);
-		return Pool[--topFree];
-	}
-	
-	inline void Crop(int newFree) {
-		assert(newFree <= topFree);
-		topFree = newFree;
-	}
-
-	IntStkEnt*Pool;
-};
 
 class NStkEnt {
 public:
@@ -248,6 +358,77 @@ public:
 
 	// Backtrack to entry pBack
 	void Backtrack(NEntry* pBack = NULL);
+
+	// Reduction search
+	NEntry* pCurRedStart;		// Reduced Lane starts here
+	int redStartDepth;			//   and at this depth in NStack
+	bool prevOverlap;			// Lane overlaps with prev Lane
+
+	// Reduction levels
+	int rLevel;
+	
+	inline bool IsRLevelNull() { return rLevel == NEntry::RLEVELNULL; }
+
+	static inline int RLevelCalc(int idx, bool isRow) {
+		return (idx << 1) + (isRow ? 1 : 0);
+	}
+	static inline int IdxFromRLevel(int level) {
+		return (level >> 1);
+	}
+	static inline bool RLevelIsCol(int level) {
+		return (level & 1) == 0;
+	}
+	static inline NLane* LaneFromLevel(int level, NLane *Rows, NLane *Cols) {
+		if (RLevelIsCol(level))
+			return Cols + IdxFromRLevel(level);
+		else
+			return Rows + IdxFromRLevel(level);
+	}
+
+	inline bool EntryInRLevel(NEntry* pEnt) {
+		if (isRow)
+			return pEnt->i == idx && pEnt->j > pEnt->i;
+		else
+			return pEnt->j == idx && pEnt->i >= pEnt->j;
+	}
+
+	bool RedStartFind();
+	void RedBackSet(NLane* Rows, NLane* Cols);
+	void NextPermRedRestart();
+	void NextPermRedFailed(int fDepth);
+
+	enum {
+		MODECONT = 0, 
+		MODERESTART = 1,
+		MODETOTOP = 2,
+		MODEFAILED = 3,
+		FDEPTHNULL = -1
+	};
+
+	int redDepth;
+	bool redSuccess;
+
+	inline bool NextPermRed(int mode, int fDepth = 0) {
+		if (mode == MODERESTART)
+			NextPermRedRestart();
+		else if (mode == MODEFAILED)
+			NextPermRedFailed(fDepth);
+		else if (mode == MODETOTOP)
+			pCur = pCurRedStart;
+		else
+			assert(mode == MODECONT);
+
+		if (isRow)
+			return NextPermRedRow();
+		else
+			return NextPermRedCol();
+	}
+
+	bool NextPermRedRow();
+	bool NextPermRedCol();
+
+	bool NextPermRedDnRow();
+	bool NextPermRedDnCol();
 
 	// Lane original openings
 	Set absMiss;		// Absolute set

@@ -3,34 +3,25 @@
 #include "senv.h"
 #include "nlane.h"
 
-template<class Lane> class Histo : public LogClient {
+class  RStkEnt {
 public:
-	Histo() {}
+	RStkEnt() : hits(0), visits(0) {}
 
-	void Init(int _n, Lane* _Rows, Lane* _Cols,
-		FastMatrix<FASTMATDIMLOG, u8>* _pMat)
-	{
-		n = _n;
-		Rows = _Rows;
-		Cols = _Cols;
-		pMat = _pMat;
+	u64 hits;
+	int visits;
+
+	inline void Reset() {
+		hits = 0;
+		visits = 0;
 	}
 
-	int n;
-	Lane* Rows;
-	Lane* Cols;
-	FastMatrix<FASTMATDIMLOG, u8> * pMat;
-
-	// Initial histo processing
-	u8 VCnt[DIMMAX];
-	u8 LastCol[DIMMAX];
-	int cnt;
-	void Start();
-	void Add(Set s, int idx);
-	int Scan(int j);
-	int Fill();
-
-
+	inline void NewVisit() {
+		hits++;
+		visits = 0;
+	}
+	inline void Success() {
+		visits++;
+	}
 };
 
 class NEnv : public LogClient {
@@ -52,7 +43,7 @@ public:
 		}
 
 		NHisto.Init(n, Rows, Cols, &Mat);
-		pOutRep = &cout;
+		RngTrack.pOutRep = &cout;
 	}
 
 	int n;
@@ -80,8 +71,11 @@ public:
 	bool DumpLane(ostream& out);
 	bool DumpPSet(ostream& out);
 	void DumpMat(ostream& out);
+	void DumpBack(ostream& out);
+	void DumpDist(ostream& out);
 	void ProcessMat();
 
+	int blankCnt;			// Total blank Count
 	void FillBlanks();
 	int RegenPSets();
 	int UniqueRemove();
@@ -89,7 +83,6 @@ public:
 	NEntry* pFirst;
 	NEntry* pLast;
 	void LinkBlanks();
-	void LinkPSets();
 
 	// Entry based search
 	int solveCnt;
@@ -105,116 +98,63 @@ public:
 	void SearchPublish();
 	void SearchThruDump(bool isDown);
 
-	char searchDir;
-	ostream* pOutRep;
-	void SearchReport(char dir) {
-		if (dir != searchDir) {
-			if (dir == 'D')
-				*pOutRep << endl;
-			else
-				*pOutRep << "  /// ";
-			searchDir = dir;
-		}
-		*pOutRep << searchDir << colLevel << " ";
-	}
-
-	int lvlMin, lvlMax;
-	int lvlTotal;
-	int period;
-	long long searchIdx;
-	const int searchIdxPeriod = 1000000;
-	void RangeInit() {
-		searchIdx = 0;
-		lvlTotal = 0;
-		Tim.Start();
-		PeriodInit();
-	}
-
-	void PeriodInit() {
-		lvlMin = 0xff;
-		lvlMax = 0;
-		period = searchIdxPeriod;
-	}
-
-	void RangeColl() {
-		period--;
-		if (lvlMin > colLevel)
-			lvlMin = colLevel;
-		if (lvlMax < colLevel)
-			lvlMax = colLevel;
-		if (period == 0) {
-			RangeDump();
-			if (lvlTotal < lvlMax)
-				lvlTotal = lvlMax;
-			PeriodInit();
-			searchIdx++;
-		}
-	}
-
-	SimpleTimer Tim;
-	long long ms;
-
-	void RangeDump() {
-		ms = Tim.LapsedMSecs();
-		*pOutRep << "[" << dec << setw(9) << ms/1000 << " s] ";
-		*pOutRep << "ITER " << dec << setw(8) << searchIdx
-			<< " MAX " << setw(2) << lvlTotal << " ";
-		for (int i = 0; i < lvlMin; i++)
-			*pOutRep << "  -";
-		for (int i = lvlMin; i <= lvlMax; i++)
-			*pOutRep << setw(3) << i;
-		*pOutRep << endl;
-	}
-
-#if 0
-	// Solve auxiliary vars
-
-	void SolveInit(int lvlFr = 0);
-	int Solve();
-	bool PublishSolution();
-	int RestrictRows(NLane* pCol);
-	void SolveFailed(int depth);
-	// Column sorting
-	LaneRank<SLane> LaneTab[DIMMAX];
-	void SortCols(ostream& out, bool doSort = true);
-	enum { SORTUP, SORTDOWN };
-	void SortTab(int order);
-
-
-	int FailCnt[DIMMAX];
-
-	int SolveCnt(int lvlFrom, int lvlTo, int iFrom, int iTo);
-	void SolveCntInit(int lvlFrom, int lvlTo, int iFrom, int iTo);
-	void CountSolution(int found);
-
-	// Change state saving
-	ChangeStack* pChgStk;
-
-	// Restricts next level rows starting at pCol->firstPermLvl
-	//       Returns failure level or -1 if success
-	void UnRestrictRows(SLane* pCol, int depth);
-	void RestoreRows(SLane* pCol);
-	bool UpdateEntries(SLane* pCol);
-
-	// Restricts next level rows for counting
-	// starting at pCol->firstPermLvl
-	void RestrictRowsCount(SLane* pCol);
-
-	SpyState Spy;
-	bool SpyDownStream(BEntry* pEnt, Set laneMask);
-	bool SpyPropagate();
-
-	// Stack based processing
-	SLane* pClog;
-	void Backtrack();
-	void BacktrackRows();
-	int BackRow(int d);
-#endif
+	RangeTrack RngTrack;
 
 	// Initial histo processing
 	Histo<NLane> NHisto;
 
 	void Dump(ostream& out, int dumpType);
 
+	// Compute Search Distances
+	int distMax;
+	static const int DISTMAX = DIMMAX * 2;
+	NEntry* DistLvl[DISTMAX];
+	NEntry* DistLvlLast[DISTMAX];
+	int DistLvlCnt[DISTMAX];
+	int DistLvlBase[DISTMAX];
+
+	static const int INDEXMAX = BLANKCNTMAX * DIMMAX;
+	NEntry* DEntIndex[INDEXMAX];
+
+	void SearchDistInit();
+	bool SearchDistInsert(NEntry *pEnt);
+	bool SearchDistThru(int j);
+	void SearchDistLink();
+	bool SearchDistComp();
+	bool SearchDSuccess();
+
+	// Distance Search
+	int dLevel;
+	int dPos;
+	BitSet* pBSet;
+	NEntry* pEnt;
+
+	void SearchDInit();
+	int SearchD();
+
+	// Reduction Search
+	int level;
+	bool fromAbove;
+	int mode;
+	int fDepth;
+
+	RStkEnt RStk[DIMMAX * 2];
+	inline void RLevellDown() {
+		level++;
+		RStk[level].hits++;
+		RStk[level].visits = 0;
+	}
+
+	int redLevel;
+	NLane* pLaneCur;
+	int SearchRed();
+	void SearchRedInit(int redLevel);
+	void SearchUpRedSuccess();
+	void SearchUpRedDone();
+	void SearchDnRed();
+	void RedPublish();
+	void SearchRedDump();
+
+	NLane* pRowCur;
 };
 

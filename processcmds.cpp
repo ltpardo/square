@@ -62,7 +62,7 @@ bool Consola::processCmd()
 		ProcessLink(Tokens[1]);
 	}
 	else if (Tokens[0] == "search") {
-		ProcessSearch(Tokens[1]);
+		ProcessSearch(Tokens[1], Tokens[2], Tokens[3]);
 	}
 	else if (Tokens[0] == "regen") {
 		ProcessRegen(Tokens[1]);
@@ -85,7 +85,7 @@ bool Consola::processCmd()
 bool Consola::ProcessDump(string& id, string& par, 
 	string& p0, string& p1, string& p2, string &p3)
 {
-	SolveEnv* pS;
+	//SolveEnv* pS;
 	NEnv* pN;
 	if (id == "")
 		SymTab.LogClient::Dump();
@@ -98,25 +98,6 @@ bool Consola::ProcessDump(string& id, string& par,
 			case SymType::TYPDEVSPM:
 				break;
 
-			case SymType::TYPSENV:
-				pS = (SolveEnv*)(pSym->pObj);
-				if (par == "")
-					kind = DUMPALL;
-				else if (par == "mat")
-					kind = DUMPMAT;
-				else if (par == "sorted")
-					kind = DUMPSORTED;
-				else if (par == "rings")
-					kind = DUMPRINGS;
-				else if (par == "lanes")
-					kind = DUMPLANES;
-				else {
-					Report(" Bad dump param\n");
-					return false;
-				}
-				pS->LogClient::Dump(kind);
-				break;
-
 			case SymType::TYPNENV:
 				pN = (NEnv*)(pSym->pObj);
 				pN->DumpSet(0, p0 == "col");
@@ -127,8 +108,12 @@ bool Consola::ProcessDump(string& id, string& par,
 					kind = DUMPMAT;
 				else if (par == "lane")
 					kind = DUMPLANES;
+				else if (par == "back")
+					kind = DUMPBACK;
 				else if (par == "pset")
 					kind = DUMPPSET;
+				else if (par == "dist")
+					kind = DUMPDIST;
 				else
 					return false;
 				pN->LogClient::Dump(kind);
@@ -167,18 +152,7 @@ bool Consola::ProcessRead(string& id, string& fname, string& dim, string& t)
 		}
 	}
 	else {
-		// SEnv 
-		SolveEnv* pSEnv = new SolveEnv(n);
-
-		if (!pSEnv->Read(fname)) {
-			cerr << "Cannot load " << datadir + fname << endl;
-			return false;
-		}
-		else {
-			pSEnv->ProcessMat();
-			SymTab.Add(id, SymType(SymType::TYPSENV), pSEnv, 0);
-			return true;
-		}
+		return true;
 	}
 }
 
@@ -230,20 +204,13 @@ bool Consola::ProcessUniqueRmv(string& id, string& fname)
 
 bool Consola::ProcessFill(string& id)
 {
-	SolveEnv* pSEnv;
+	//SolveEnv* pSEnv;
 	NEnv* pN;
 	Symbol* pSym = SymTab.Find(id);
 	if (pSym == 0)
 		return false;
 
-	if (pSym->typ.t == SymType::TYPSENV) {
-		pSEnv = (SolveEnv*)pSym->pObj;
-		while (pSEnv->HistoFill() > 0)
-			;
-		pSEnv->FillBlanks();
-		return true;
-	}
-	else if (pSym->typ.t == SymType::TYPNENV) {
+	if (pSym->typ.t == SymType::TYPNENV) {
 		pN = (NEnv*)pSym->pObj;
 		while (pN->NHisto.Fill() > 0)
 			;
@@ -256,7 +223,7 @@ bool Consola::ProcessFill(string& id)
 	return false;
 }
 
-bool Consola::ProcessSearch(string& id)
+bool Consola::ProcessSearch(string& id, string& kind, string& level)
 {
 	NEnv* pN;
 	Symbol* pSym = SymTab.Find(id);
@@ -265,12 +232,20 @@ bool Consola::ProcessSearch(string& id)
 
 	if (pSym->typ.t == SymType::TYPNENV) {
 		pN = (NEnv*)pSym->pObj;
-		pN->SearchThru();
-		return true;
+		if (kind == "dist")
+			pN->SearchD();
+		else if (kind == "rinit") {
+			pN->SearchRedInit(tokToInt(level));
+		}
+		else if (kind == "red") {
+			pN->SearchRed();
+		}
+		else
+			return false;
 	}
-
-	// Wrong object type
-	return false;
+	else
+		return false;
+	return true;
 }
 
 bool Consola::ProcessRegen(string& id)
@@ -295,17 +270,6 @@ bool Consola::ProcessRegen(string& id)
 
 bool Consola::ProcessSort(string& id, string& par)
 {
-	SolveEnv* pSEnv = (SolveEnv*)FindObj(id);
-	if (pSEnv == 0)
-		return false;
-
-	int order;
-	if (par == "up")
-		order = SolveEnv::SORTUP;
-	else if (par == "down")
-		order = SolveEnv::SORTDOWN;
-	pSEnv->SortTab(order);
-
 	return true;
 }
 
@@ -344,11 +308,6 @@ bool Consola::ProcessDebug(string& par0, string& par1, string& par2)
 
 bool Consola::ProcessLink(string& id)
 {
-	SolveEnv* pSEnv = (SolveEnv*)FindObj(id);
-	if (pSEnv == 0)
-		return false;
-
-	pSEnv->LinkBlanks();
 	return true;
 
 }
@@ -356,15 +315,5 @@ bool Consola::ProcessLink(string& id)
 bool Consola::ProcessCount(string& id, string& lfrom, string& lto,
 	string& ifrom, string& ito)
 {
-	SolveEnv* pSEnv = (SolveEnv*)FindObj(id);
-	if (pSEnv == 0)
-		return false;
-
-	int lf = tokToInt(lfrom);
-	int lt = tokToInt(lto);
-	int ifr = tokToInt(ifrom);
-	int it = tokToInt(ito);
-	pSEnv->SolveCnt(lf, lt, ifr, it);
-
 	return true;
 }

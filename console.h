@@ -227,7 +227,7 @@ public:
 	bool ProcessSort(string& id, string& par);
 	bool ProcessLink(string& id);
 	bool ProcessCount(string& id, string& lfrom, string& lto, string& ifrom, string& ito);
-	bool ProcessSearch(string& id);
+	bool ProcessSearch(string& id, string &kind, string& level);
 	bool ProcessDebug(string& par0, string &par1, string& par2);
 	bool ProcessReadRaw(string& id, string& fname, string &sortMode);
 	bool ProcessWriteRaw(string& id, string& fname);

@@ -4,10 +4,12 @@
 #include <intrin.h>
 #include <algorithm>
 #include <string>
+#include "simpletimer.h"
+#include "logger.h"
+#include "sets.h"
 
 using namespace std;
 
-typedef u64 Mask;
 
 static const int DIMMAX = sizeof(u64) * 8;
 static const int DIM = 35;
@@ -15,11 +17,13 @@ static const int BLANKCNTLOG = 4;
 static const int BLANKCNTMAX = 1 << BLANKCNTLOG;
 static const int BLANKCNTMASK = BLANKCNTMAX - 1;
 
+enum { DUMPALL, DUMPMAT, DUMPBACK, DUMPSORTED, DUMPRINGS, DUMPLANES, DUMPPSET, DUMPDIST };
+
 class DebugState {
 public:
 	DebugState() : dumpExpand(0), dumpRange(INT_MAX),
 		dumpCompare(0), dumpTerm(0), dumpMakeSingle(0), 
-		dumpLevel(DIMMAX), noPotSort(true), lowPotFirst(true)
+		dumpLevel(DIMMAX * 2), noPotSort(true), lowPotFirst(true)
 	{
 		pOut = &cout;
 	}
@@ -60,148 +64,6 @@ public:
 };
 
 extern DebugState DbgSt;
-
-class Set {
-public:
-	Set() : mask(0) {}
-	Set(Mask v) : mask(v) {}
-
-	Mask mask;
-
-	Mask operator= (Mask m) { return mask = m; }
-	bool operator== (Mask m) { return mask == m; }
-	bool operator== (Set& s) { return mask == s.mask; }
-	bool operator!= (Mask m) { return mask != m; }
-	bool operator!= (Set& s) { return mask != s.mask; }
-	bool operator>= (Set& s) { return (mask & s.mask) == s.mask; }
-	bool operator<= (Set& s) { return (mask & s.mask) == mask; }
-
-	void operator+= (Mask m) { mask |= m; }
-	void operator-= (Mask m) { mask &= ~m; }
-	void operator|= (Mask m) { mask |= m; }
-	void operator&= (Mask m) { mask &= m; }
-
-	void operator+= (Set s) { mask |= s.mask; }
-	void operator-= (Set s) { mask &= ~s.mask; }
-	void operator|= (Set s) { mask |= s.mask; }
-	void operator&= (Set s) { mask &= s.mask; }
-	void operator^= (Set s) { mask ^= s.mask; }
-
-	Mask operator+ (Mask m) { return mask | m; }
-	Mask operator| (Mask m) { return mask | m; }
-	Mask operator& (Mask m) { return mask & m; }
-
-	Mask operator+ (Set s) { return mask | s.mask; }
-	Mask operator- (Set s) { return mask & (~s.mask); }
-	Mask operator| (Set s) { return mask | s.mask; }
-	Mask operator& (Set s) { return mask & s.mask; }
-
-	Mask operator~ () { return ~mask; }
-
-	Mask GetFirst() {
-		return mask & (~mask + 1);
-	}
-
-	u8 GetFirstIdx() {
-		Mask m = mask & (~mask + 1);
-		return (u8)__popcnt64(m - 1);
-	}
-
-	Mask ExtractFirst() {
-		Mask m = mask & (~mask + 1);
-		mask &= ~m;
-		return m;
-	}
-
-	u8 ExtractIdx() {
-		Mask m = mask & (~mask + 1);
-		mask &= ~m;
-		return (u8)__popcnt64(m - 1);
-	}
-
-	int ExtractValues(u8* pV, int cntMax) {
-		int pos;
-		Set m = mask;
-		u8 v;
-
-		for (pos = 0; ; pos++) {
-			v = (u8)m.ExtractIdx();
-			pV[pos] = v;
-			assert(pos < cntMax);
-			if (m == 0)
-				break;
-		}
-
-		return pos + 1;
-	}
-
-	bool CountIsOne() { return mask == GetFirst(); }
-	int Count() { return (int)__popcnt64(mask); }
-	bool Contains(int idx) { return Contains(BitMask(idx)); }
-	bool Contains(Mask m) { return (mask & m) == m; }
-	bool Contains(Set s) { return Contains(s.mask); }
-
-	static const u8 DIMMAX = sizeof(Mask) * 8;
-	static const Mask ONE = 1;
-	static Mask BitMask(u8 v) { return ONE << v; }
-
-	void operator+= (u8 v) { mask |= (ONE << v); }
-	void operator-= (u8 v) { mask &= (~(ONE << v)); }
-
-	static u8 GetIdx(Mask m) {
-		m &= (~m + 1);
-		return (u8)__popcnt64(m - 1);
-	}
-
-
-};
-
-/////////////////////////////////////////////////
-//  Aux static methods
-//
-class Set16 {
-public:
-	Set16() {}
-
-	static inline u16 GetFirst(u16 mask) {
-		return mask & (~mask + 1);
-	}
-
-	static  inline u16 GetFirstIdx(u16 mask) {
-		u16 m = mask & (~mask + 1);
-		return __popcnt16(m - 1);
-	}
-
-	static inline  u16 ExtractFirst(u16 &mask) {
-		u16 m = mask & (~mask + 1);
-		mask &= ~m;
-		return m;
-	}
-
-	static  inline u16 ExtractIdx(u16 &mask) {
-		u16 m = mask & (~mask + 1);
-		mask &= ~m;
-		return __popcnt16(m - 1);
-	}
-
-
-};
-
-enum { FASTMATDIMLOG = 6 };
-
-template < int DIMLOG, class T> class FastMatrix {
-public:
-	FastMatrix() {}
-	static const int dim = 1 << DIMLOG;
-	T Val[dim * dim];
-
-	inline T& operator()(int i, int j) {
-		return Val[(i << DIMLOG) + j];
-	}
-	inline T* operator[](int i) {
-		return Val + (i << DIMLOG);
-	}
-};
 
 template<class Ent> class InOut {
 public:
@@ -260,24 +122,68 @@ public:
 		out << endl;
 	}
 
-	void OutHeader(ostream& out, int cnt, Ent* pHdr = 0) {
-		out << "      ";
+	void OutHeader(int cnt, Ent* pHdr = 0) {
+		*pOut << "      ";
 		for (int j = 0; j < cnt; j++) {
-			out << " " << setw(2) << (pHdr == 0 ? j : (int)pHdr[j]);
+			*pOut << " " << setw(2) << (pHdr == 0 ? j : (int)pHdr[j]);
 		}
-		out << endl;
+		*pOut << endl;
 	}
 
-	void OutLineV(ostream& out, Ent* pLine, int i, int cnt) {
-		out << "[" << setw(2) << i << "]  ";
+	ostream* pOut;
+	void OutSet(ostream& out) { pOut = &out;  }
+
+	void OutHeaderDirect(int cnt, int wd = 2) {
+		*pOut << "      ";
 		for (int j = 0; j < cnt; j++) {
-			out << (((j & 3) != 0) ? " " : "|");
-			if ((int)pLine[j] > cnt)
-				out << " *";
-			else
-				out << setw(2) << (int)pLine[j];
+			*pOut << " " << setw(wd) << j;
 		}
-		out << endl;
+		*pOut << endl;
+	}
+
+	void OutRowNum(int r) {
+		if (r >= 0)
+			*pOut << "[" << setw(2) << r << "]  ";
+		else
+			*pOut << "      ";
+	}
+
+	void OutSep(int j) {
+		*pOut << (((j & 3) != 0) ? " " : "|");
+	}
+
+	void OutPad(int wd) {
+		char bl[] = "        ";
+		int disp = wd > sizeof(bl) ? 0 : sizeof(bl) - wd - 1;
+		*pOut << bl + disp;
+	}
+
+	void OutPair(char desc, int v, int wd) {
+		*pOut << desc << setw(wd - 1) << v;
+	}
+
+	void OutStr(const char *str) {
+		*pOut << str;
+	}
+
+	void OutVal(int v, int wd) {
+		*pOut << setw(wd) << v;
+	}
+
+	void EndLine() { *pOut << endl;  }
+
+	void OutLineV(Ent* pLine, int i, int cnt, int wd = 2) {
+		char bl[] = "       *";
+		int disp = wd > sizeof(bl) ? 0 : sizeof(bl) - wd - 1;
+		OutRowNum(i);
+		for (int j = 0; j < cnt; j++) {
+			OutSep(j);
+			if ((int)pLine[j] > cnt)
+				*pOut << bl + disp;
+			else
+				*pOut << setw(wd) << (int)pLine[j];
+		}
+		*pOut << endl;
 	}
 
 };
@@ -543,6 +449,15 @@ public:
 	void Merge(SortIdx iFr, SortIdx aSz, SortIdx bSz);
 
 	bool Test(int testCnt, int size);
+
+	void TestSort()
+	{
+		Sorter TSort;
+		for (int sz = 2; sz <= 12; sz++) {
+			cout << "Testing sz " << sz << endl;
+			TSort.Test(2000, sz);
+		}
+	}
 };
 
 typedef u16 LMask;
@@ -629,29 +544,10 @@ public:
 	int termHt;			// Number of levels for terminal encoding
 	int depthTerm;		// Level at which terminal encoding starts
 
-	///////////////////////////////////////////////////////
-	//		SPLIT PSET
-	///////////////////////////////////////////////////////
-
 	enum { LNKNULL = 0xFFFF };
 	enum { TEMPAREASZ = BLANKCNTMAX + 2	};
-	ShortLink* TempPool;
-
-	enum { POOLSZ = 1 << 16 };
-	u16* Pool;
-	int freeLnk;
-	u16* TermPool;
-	int freeTermLnk;
-
-	bool Alloc(bool countOnly);
-	u16* TempArea(int level);
 	void Init(int _depth, int _termHt, bool countOnly);
-	u16* NodeStart(int level);
-	u16* NodeBranch(u16* pTemp, u16 cnt, u16 lnk);
-	u16 NodeEnd(int level, u16* pEnd, u16 cnt, u16 vMask);
-	bool VerifyCounts();
-	void FollowBranch(int level, ShortLink lnk);
-		
+
 	///////////////////////////////////////////////////////
 	//		EXPANDED PSET
 	///////////////////////////////////////////////////////
@@ -879,7 +775,7 @@ public:
 	LvlBranch LvlBranchAdv(int lvl, LvlBranch inBranch, u8 v);
 
 	void CountTerm() { permCnt++; }
-	bool OutOflo() { return freeLnk >= POOLSZ || freeTermLnk >= POOLSZ; }
+	//bool OutOflo() { return freeLnk >= POOLSZ || freeTermLnk >= POOLSZ; }
 
 	int LvlCnt[BLANKCNTMAX];
 	int LvlMax[BLANKCNTMAX];
@@ -900,3 +796,115 @@ public:
 	string nodeId;
 	void DumpNodeId(ostream &out, int lvl, ShortLink nodeDisp = LVLNULL);
 };
+
+class RangeTrack {
+public:
+	RangeTrack() {}
+
+	char searchDir;
+	ostream* pOutRep;
+	void SearchReport(char dir) {
+		if (dir != searchDir) {
+			if (dir == 'D')
+				*pOutRep << endl;
+			else
+				*pOutRep << "  /// ";
+			searchDir = dir;
+		}
+		*pOutRep << searchDir << /*colLevel <<*/ " ";
+	}
+
+	int lvlMin, lvlMax;
+	int posMin, posMax;
+	int lvlTotal;
+	int period;
+	long long searchIdx;
+	const int searchIdxPeriod = 1000000;
+	const int dumpFreq = 10;
+	void Init() {
+		searchIdx = 0;
+		lvlTotal = 0;
+		Tim.Start();
+		PeriodInit();
+	}
+
+	void PeriodInit() {
+		lvlMin = 0xff;
+		lvlMax = 0;
+		period = searchIdxPeriod;
+		posMin = DIMMAX * DIMMAX;
+		posMax = 0;
+	}
+
+	void Collect(int colLevel, int pos = -1) {
+		period--;
+		if (lvlMin > colLevel)
+			lvlMin = colLevel;
+		if (lvlMax < colLevel)
+			lvlMax = colLevel;
+
+		if (pos >= 0) {
+			if (posMin > pos)
+				posMin = pos;
+			if (posMax < pos)
+				posMax = pos;
+		}
+
+		if (period == 0) {
+			if (searchIdx % dumpFreq == 0)
+				RangeDump();
+			if (lvlTotal < lvlMax)
+				lvlTotal = lvlMax;
+			PeriodInit();
+			searchIdx++;
+		}
+	}
+
+	SimpleTimer Tim;
+	long long ms;
+
+	void RangeDump() {
+		ms = Tim.LapsedMSecs();
+		*pOutRep << "[" << dec << setw(9) << ms / 1000 << " s] ";
+		//*pOutRep << "(POS" << setw(3) << posMin << ":" << posMax << ") ";
+		*pOutRep << "ITR " << dec << setw(8) << searchIdx
+			<< " MAX " << setw(2) << lvlTotal << " ";
+		for (int i = 0; i < lvlMin; i++)
+			*pOutRep << "  -";
+		for (int i = lvlMin; i <= lvlMax; i++)
+			*pOutRep << setw(3) << i;
+		*pOutRep << endl;
+	}
+
+};
+
+template<class Lane> class Histo : public LogClient {
+public:
+	Histo() {}
+
+	void Init(int _n, Lane* _Rows, Lane* _Cols,
+		FastMatrix<FASTMATDIMLOG, u8>* _pMat)
+	{
+		n = _n;
+		Rows = _Rows;
+		Cols = _Cols;
+		pMat = _pMat;
+	}
+
+	int n;
+	Lane* Rows;
+	Lane* Cols;
+	FastMatrix<FASTMATDIMLOG, u8>* pMat;
+
+	// Initial histo processing
+	u8 VCnt[DIMMAX];
+	u8 LastCol[DIMMAX];
+	int cnt;
+	void Start();
+	void Add(Set s, int idx);
+	int Scan(int j);
+	int Fill();
+
+
+};
+

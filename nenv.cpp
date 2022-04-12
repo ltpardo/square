@@ -237,25 +237,20 @@ void NEnv::FillBlanks()
 	}
 
 	// Fill Cols (will assume thru direction)
+	blankCnt = 0;
 	for (int j = 0; j < n; j++) {
 		Cols[j].FillBlanks(Rows);
+		blankCnt += Cols[j].blankCnt;
 		ColsPermCnt[j] = Cols[j].PSet.permCnt;
-		if (Cols[j].PSet.OutOflo())
-			Report(" OOOOFFFFLLLLOOO  COL ", j);
-		if (Cols[j].PSet.badCounts)
-			Report(" BAD COUNTS COL ", j);
 	}
 
 	// Fill Rows (cross direction)
 	for (int i = 0; i < n; i++) {
 		Rows[i].FillBlanks(Cols);
-		if (Rows[i].PSet.OutOflo())
-			Report(" OOOOFFFFLLLLOOO  ROW ", i);
-		if (Rows[i].PSet.badCounts)
-			Report(" BAD COUNTS ROW ", i);
 	}
 
 	LinkBlanks();
+	// SearchDistComp();
 }
 
 int NEnv::RegenPSets()
@@ -368,10 +363,10 @@ void NEnv::SearchUpCol()
 int NEnv::SearchThru()
 {
 	SearchThruInit();
-	RangeInit();
+	RngTrack.Init();
 
 	while (colLevel >= 0) {
-		RangeColl();
+		RngTrack.Collect(colLevel);
 		if (colLevel >= DbgSt.dumpLevel)
 			DbgSt.dumpExpand = 0x2000;
 		else
@@ -401,14 +396,90 @@ int NEnv::SearchThru()
 void NEnv::DumpMat(ostream& out)
 {
 	u8 buf[DIMMAX];
-
-	IO.OutHeader(out, n);
+	IO.OutSet(out);
+	IO.OutHeader(n);
 	for (int i = 0; i < n; i++) {
 		for (int j = 0; j < n; j++) {
 			buf[j] = Mat[i][j];
 		}
-		IO.OutLineV(out, buf, i, n);
+		IO.OutLineV(buf, i, n);
 	}
+}
+
+void NEnv::DumpBack(ostream& out)
+{
+	const int fldWd = 3;
+	int d;
+	int bd;
+	NEntry* pEnt, *pTo;
+	NLane* pLane;
+	IO.OutSet(out);
+	IO.OutHeaderDirect(n, fldWd);
+
+	for (int i = 0; i < n; i++) {
+		NLane* pRow = Rows + i;
+		d = 0;
+		int v;
+		IO.OutRowNum(-1);
+		for (int j = 0; j < n; j++) {
+			IO.OutSep(j);
+			v = Mat[i][j];
+			if (v >= n) {
+				pEnt = pRow->NStack[d++].pEnt;
+				if (pEnt->IsRedTop()) {
+					IO.OutStr(" # ");
+				}
+				else {
+					pLane = NLane::LaneFromLevel(pEnt->redBackLvl, Rows, Cols);
+					bd = pEnt->redBackDepth;
+					pTo = pLane->NStack[bd].pEnt;
+					if (pLane->isRow)
+						IO.OutPair('I', pTo->i, fldWd);
+					else
+						IO.OutPair('J', pTo->j, fldWd);
+				}
+			}
+			else {
+				IO.OutPad(fldWd);
+			}
+		}
+		IO.EndLine();
+
+		d = 0;
+		IO.OutRowNum(i);
+		for (int j = 0; j < n; j++) {
+			IO.OutSep(j);
+			v = Mat[i][j];
+			if (v >= n) {
+				pEnt = pRow->NStack[d++].pEnt;
+				if (pEnt->IsRedTop()) {
+					IO.OutStr(" # ");
+				}
+				else {
+					pLane = NLane::LaneFromLevel(pEnt->redBackLvl, Rows, Cols);
+					bd = pEnt->redBackDepth;
+					pTo = pLane->NStack[bd].pEnt;
+					if (pLane->isRow)
+						IO.OutPair('J', pTo->j, fldWd);
+					else
+						IO.OutPair('I', pTo->i, fldWd);
+				}
+			}
+			else {
+				IO.OutVal(v, fldWd);
+			}
+		}
+		IO.EndLine();
+	}
+}
+
+void NEnv::DumpDist(ostream& out)
+{
+	out << endl << " DISTANCES  max: " << distMax << endl;
+	for (int d = 0; d < distMax; d++) {
+		out << setw(3) << d << setw(4) << DistLvlCnt[d] << endl;
+	}
+	out << endl;
 }
 
 // DPars[0]: isCol
@@ -478,6 +549,10 @@ void NEnv::Dump(ostream& out, int dumpType)
 		DumpMat(out);
 		break;
 
+	case DUMPBACK:
+		DumpBack(out);
+		break;
+
 	case DUMPLANES:
 		DumpLane(out);
 		break;
@@ -490,114 +565,286 @@ void NEnv::Dump(ostream& out, int dumpType)
 		DumpPSet(out);
 		break;
 
+	case DUMPDIST:
+		DumpDist(out);
+		break;
+
 	default:
 		break;
 	}
 }
 
-#if 0
-void NEnv::SolveInit(int lvlFr)
+bool NEnv::SearchDistThru(int j)
 {
-	pColCur = LaneTab[lvlFr].pLane;
-	pColCur->PermuteStart();
-	for (int s = 0; s < n; s++) {
-		LaneTab[s].pLane->St.Reset();
-	}
+	NEntry* pEnt;
+	int dist;
 
-	// Init laneMiss for all rows
-	BEntry* pEnt;
-	for (int i = 0; i < n; i++) {
-		pEnt = Rows[i].ringHd.rtLink;
-		if (!pEnt->IsHead())
-			pEnt->laneMiss = Rows[i].missing;
+	dist = 0;
+	NLane* pColCur = Cols + j;
+	for (pEnt = Cols[j].NStack[0].pEnt; ; pEnt = pEnt->dnThru) {
+		if (dist < pEnt->upCross->dLevel)
+			dist = pEnt->upCross->dLevel;
+		dist++;
+		pEnt->dLevel = dist;
+		SearchDistInsert(pEnt);
+		if (pEnt->thLast)
+			break;
 	}
-
-	for (colLevel = lvlFr; colLevel <= n - 1; colLevel++) {
-		pColCur = LaneTab[colLevel].pLane;
-		pColCur->counting = false;
-	}
-
-	solveCnt = 0;
+	return true;
 }
 
-int NEnv::Solve()
+void NEnv::SearchDistLink()
 {
-	int depth;
-	// SolveInit();
+	NEntry* pEnt;
 
-	for (colLevel = 0; colLevel >= 0; ) {
-		if (pColCur->PermuteStep() > 0) {
-			// Successful step
-			if (colLevel >= n - 1) {
-				// At bottom level: a solution has been found
-				// PublishSolution();
-			}
-			else {
-				// Continue search down next level
-				if ((depth = RestrictRows(pColCur)) < 0) {
-					pColCur = Cols + (++colLevel);
-					pColCur->PermuteStart();
-				}
-				else {
-					// Restart permute at failure depth
-					SolveFailed(depth);
-				}
-			}
-		}
-		else {
-			// Level has been exhausted
-			if (colLevel > 0) {
-				// Not on top: no more permutations at this level
-				pColCur = Cols + (--colLevel);
-			}
-			else
-				// At level 0: solve is done
+	DistLvlBase[0] = 0;
+	for (int d = 1; d <= distMax; d++) {
+		DistLvlBase[d] = DistLvlBase[d - 1] + DistLvlCnt[d - 1];
+	}
+	assert(blankCnt ==
+		DistLvlBase[distMax] + DistLvlCnt[distMax]);
+
+	for (int j = 0; j < n; j++) {
+		for (pEnt = Cols[j].NStack[0].pEnt; ; pEnt = pEnt->dnThru) {
+			pEnt->dLvlPos += DistLvlBase[pEnt->dLevel];
+			DEntIndex[pEnt->dLvlPos] = pEnt;
+			if (pEnt->thLast)
 				break;
 		}
 	}
 
+	int b;
+	for (b = 1; b < DistLvlBase[2]; b++) {
+		pEnt = DEntIndex[b];
+		pEnt->backPos = b - 1;
+	}
+
+	for ( ; b < blankCnt; b++) {
+		pEnt = DEntIndex[b];
+		assert(pEnt != NULL);
+		if (pEnt->upThru->dLvlPos > pEnt->upCross->dLvlPos)
+			pEnt->backPos = pEnt->upThru->dLvlPos;
+		else
+			pEnt->backPos = pEnt->upCross->dLvlPos;
+	}
+}
+
+bool NEnv::SearchDistComp()
+{
+	for (int j = 0; j < n; j++) {
+		SearchDistThru(j);
+	}
+	SearchDistLink();
+	return true;
+}
+
+void NEnv::SearchDistInit()
+{
+	for (int i = 0; i < INDEXMAX; i++)
+		DEntIndex[i] = NULL;
+
+	for (int d = 0; d < DISTMAX; d++) {
+		DistLvl[d] = 0;
+		DistLvlCnt[d] = 0;
+	}
+	distMax = 0;
+}
+
+bool NEnv::SearchDistInsert(NEntry* pEnt)
+{
+	int d = pEnt->dLevel;
+	if (distMax < d)
+		distMax = d;
+
+	pEnt->pDist = DistLvl[d];
+	DistLvl[d] = pEnt;
+	pEnt->dLvlPos = DistLvlCnt[d];
+	DistLvlCnt[d]++;
+
+	return true;
+}
+
+
+bool NEnv::SearchDSuccess()
+{
+	return dPos >= blankCnt;
+}
+
+void NEnv::SearchDInit()
+{
+	pBSet = new BitSet(blankCnt + 1);
+	// Init PSets first access
+	for (int l = 0; l < n; l++) {
+		Cols[l].ringHd.dnThru->thUpBr = 0;
+		Rows[l].ringHd.dnCross->crUpBr = 0;
+	}
+
+	for (int e = 0; ; e++) {
+		pEnt = DEntIndex[e];
+		if (pEnt->dLevel > 1)
+			break;
+		pEnt->thUpBr = 0;
+		pEnt->crUpBr = 0;
+		pEnt->ESt.BrNewSet();
+	}
+	dLevel = 0;
+	dPos = 0;
+}
+
+int NEnv::SearchD()
+{
+	SearchDInit();
+	RngTrack.Init();
+
+	while (1) {
+		dPos = pBSet->ExtractFirst();
+
+		pEnt = DEntIndex[dPos];
+		RngTrack.Collect(pEnt->dLevel, dPos);
+
+		if (! pEnt->DProcess(pBSet)) {
+			// Failure: backtrack
+			if (pEnt->backPos < 0)
+				break;
+			pBSet->Set(pEnt->backPos);
+			pBSet->Set(dPos);
+		}
+		else if (SearchDSuccess()) {
+			// Found Solution
+			SearchPublish();
+			continue;
+		}
+	}
+
+	std::cout << endl << " SEARCH D CNT " << solveCnt << endl;
 	return solveCnt;
 }
 
-void NEnv::SolveFailed(int depth)
-{
-	//pColCur->PermuteContinueAt(depth);
-}
-
-
-// Restricts next level rows starting at pCol->firstPermLvl
-//       Returns failure level or -1 if success
-//
-int NEnv::RestrictRows(NLane* pCol)
-{
-	NEntry* pBlank;
-	NEntry* pNext;
-
-	// Restriction begins at first permutation level
-	int d = pCol->firstPermLvl;
-	for (; d < pCol->missCnt; d++) {
-		pBlank = pCol->NStack[d].pEnt;
-		pNext = pBlank->dnCross;
-#if 0
-		if (!pNext->IsHead()) {
-			// Update Downstream
-			pNext->laneMiss = pBlank->laneMiss & (~pBlank->chosenBit);
-			pNext->miss = pNext->laneMiss & Cols[pNext->j].absMiss;
-
-			if (pNext->miss == 0) {
-				// This won't do: pNext is unviable
-				return d;
-			}
-
-			Set laneMask = pNext->laneMiss;
-			if (pNext->miss.CountIsOne())
-				laneMask -= pNext->miss;
-		}
+#ifdef DBGEXPAND
 #endif
+
+int NEnv::SearchRed()
+{
+	level = 0;
+	fromAbove = true;
+	mode = NLane::MODERESTART;
+	RngTrack.Init();
+
+	while (level >= 0) {
+		RngTrack.Collect(level);
+
+		if (level >= DbgSt.dumpLevel)
+			DbgSt.dumpExpand = 0x2000;
+		else
+			DbgSt.dumpExpand = 0;
+
+		if (fromAbove) {
+			RStk[level].NewVisit();
+		} 
+
+		pLaneCur = (NLane::RLevelIsCol(level) ? Cols : Rows) + (level >> 1);
+		if (pLaneCur->NextPermRed(mode, fDepth)) {
+			// Reduction at level done
+			if (level >= redLevel) {
+				// Found reduccion: account and climb up
+				RStk[level].Success();
+				RedPublish();
+				SearchUpRedSuccess();
+			}
+			else {
+				// Proceed down: fromAbove = true, level++, MODERESTART
+				SearchDnRed();
+			}
+		}
+		else {
+			// Current lane is done: fromAbove = false
+			if (RStk[level].visits == 0)
+				// Lane failed: {level, fDepth} from pLaneCr->pCur, MODEFAILED
+				SearchUpRedDone();
+			else
+				// Lane had success: level--, MODECONT
+				SearchUpRedSuccess();
+		}
 	}
 
-	// Restriction was succesful
-	return -1;
+	std::cout << endl << " SEARCH RED CNT " << solveCnt << endl;
+	return solveCnt;
 }
-#endif
+
+void NEnv::SearchRedInit(int _redLevel)
+{
+	redLevel = _redLevel;
+
+	// Init PSets first access
+	for (int l = 0; l < n; l++) {
+		Cols[l].ringHd.thDnBr = 0;
+		Rows[l].ringHd.crDnBr = 0;
+	}
+
+	// Init Reduction start and backtrack info
+	for (int l = 0; l < n; l++) {
+		Cols[l].RedStartFind();
+		Rows[l].RedStartFind();
+		// Backtrack info depends only on lower level lanes
+		Cols[l].RedBackSet(Rows, Cols);
+		Rows[l].RedBackSet(Rows, Cols);
+	}
+
+	for (int l = 0; l < n * 2; l++)
+		RStk[l].Reset();
+
+	// Init PSets first access
+	for (int l = 0; l < n; l++) {
+		Cols[l].ringHd.dnThru->thUpBr = 0;
+		Rows[l].ringHd.dnCross->crUpBr = 0;
+	}
+}
+
+void NEnv::SearchUpRedSuccess()
+{
+	// Go back to previous level, continue
+	mode = NLane::MODECONT;
+	level--;
+	fDepth = NLane::FDEPTHNULL;
+	fromAbove = false;
+	SearchRedDump();
+}
+
+void NEnv::SearchUpRedDone()
+{
+	mode = NLane::MODEFAILED;
+	level = pLaneCur->pCur->redBackLvl;
+	fDepth = pLaneCur->redDepth;
+	pLaneCur->redDepth = 0;
+	fromAbove = false;
+	SearchRedDump();
+}
+
+void NEnv::SearchDnRed()
+{
+	RStk[level].Success();
+	mode = NLane::MODERESTART;
+	level++;
+	fDepth = NLane::FDEPTHNULL;
+	fromAbove = true;
+	SearchRedDump();
+}
+
+void NEnv::RedPublish()
+{
+	solveCnt++;
+}
+
+void NEnv::SearchRedDump()
+{
+	if (!DbgSt.dumpExpand)
+		return;
+
+	if (fromAbove)
+		*DbgSt.pOut << "vvvv DOWN to " << level << endl;
+	else if (mode == NLane::MODEFAILED)
+		*DbgSt.pOut << "^^^^ UP FAIL " << level << " depth " << fDepth << endl;
+	else if(mode == NLane::MODECONT)
+		* DbgSt.pOut << "^^^^ UP DONE " << level << endl;
+}
 

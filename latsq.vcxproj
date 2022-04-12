@@ -142,23 +142,20 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="console.cpp" />
-    <ClCompile Include="latsq.cpp" />
     <ClCompile Include="nentry.cpp" />
     <ClCompile Include="nenv.cpp" />
     <ClCompile Include="nlane.cpp" />
     <ClCompile Include="processcmds.cpp" />
-    <ClCompile Include="senv.cpp" />
-    <ClCompile Include="senvxtra.cpp" />
+    <ClCompile Include="main.cpp" />
     <ClCompile Include="utils.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="basic.h" />
     <ClInclude Include="console.h" />
-    <ClInclude Include="latsq.h" />
     <ClInclude Include="logger.h" />
     <ClInclude Include="nenv.h" />
     <ClInclude Include="nlane.h" />
-    <ClInclude Include="senv.h" />
+    <ClInclude Include="sets.h" />
     <ClInclude Include="simpletimer.h" />
     <ClInclude Include="stdinc.h" />
     <ClInclude Include="utils.h" />

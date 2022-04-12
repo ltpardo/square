@@ -277,7 +277,6 @@ public:
 	int ExtractColIdx() { return touched.ExtractIdx();  }
 };
 
-enum { DUMPALL, DUMPMAT, DUMPSORTED, DUMPRINGS, DUMPLANES, DUMPPSET };
 
 class SolveEnv : public LogClient {
 public:

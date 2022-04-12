@@ -1,31 +1,8 @@
-#include "utils.h"
+#include "stdinc.h"
 #include "nlane.h"
-
-///////////////////////////////////////////////////////
-//		SPLIT PSET
-///////////////////////////////////////////////////////
-
-bool PermSet::Alloc(bool countOnly)
-{
-	if (countOnly) {
-		Pool = NULL;
-		TermPool = NULL;
-	}
-	else {
-		Pool = new u16[POOLSZ];
-		TermPool = new u16[POOLSZ];
-	}
-	return true;
-}
-
-u16* PermSet::TempArea(int level)
-{
-	return TempPool + level * TEMPAREASZ;
-}
 
 void PermSet::Init(int _depth, int _termHt, bool countOnly)
 {
-	Alloc(countOnly);
 	depth = _depth;
 	termHt = _termHt;
 	depthTerm = depth - termHt;
@@ -33,128 +10,10 @@ void PermSet::Init(int _depth, int _termHt, bool countOnly)
 	InitCounts();
 	InitTotals();
 
-	freeLnk = 0;
-	freeTermLnk = 0;
+	ExpPool = 0;
+	ExpTempPool = 0;
+
 	outOflo = false;
-	format = SPLIT;
-}
-
-u16* PermSet::NodeStart(int level)
-{
-	return TempArea(level) + 1;
-}
-
-u16* PermSet::NodeBranch(u16* pTemp, u16 cnt, u16 lnk)
-{
-	*(pTemp++) = cnt;
-	*(pTemp++) = lnk;
-	return pTemp;
-}
-
-u16 PermSet::NodeEnd(int level, u16* pEnd, u16 cnt, u16 vMask)
-{
-	u16* pTemp = TempArea(level);
-	nodeCnt++;
-	NodeCnt[level]++;
-	if (cnt == 1) {
-		SingleCnt[level]++;
-		singleCnt++;
-	}
-
-	u16 sz = (u16)(pEnd - pTemp);
-	assert(sz < TEMPAREASZ);
-
-	u16* pPool;
-	if (level < depthTerm - 1) {
-		// Store node in Pool area
-		pPool = Pool + freeLnk;
-		baseLnk = freeLnk;
-		freeLnk += sz;
-		if (freeLnk >= POOLSZ) {
-			outOflo = true;
-			return PermSet::LNKNULL;
-		}
-	}
-	else {
-		// Store node in TermPool area
-		pPool = TermPool + freeTermLnk;
-		baseLnk = freeTermLnk;
-		freeTermLnk += sz;
-		if (freeLnk >= POOLSZ) {
-			outOflo = true;
-			return PermSet::LNKNULL;
-		}
-	}
-
-	*(pTemp) = vMask;
-	if (Pool != NULL) {
-		while (pTemp < pEnd) {
-			*(pPool++) = *(pTemp++);
-		}
-	}
-	return (u16)baseLnk;
-}
-
-bool PermSet::VerifyCounts()
-{
-	InitCounts();
-	FollowBranch(0, (u16)baseLnk);
-	return CheckCounts();
-}
-
-void PermSet::FollowBranch(int level, ShortLink lnk)
-{
-	ShortLink* pNode = ((level < depthTerm - 1) ? Pool : TermPool) + lnk;
-	u16 nodeCnt = __popcnt16(*pNode++);
-	if (level < depthTerm - 1)
-		assert(nodeCnt <= depth);
-	for (int l = 0; l < nodeCnt; l++) {
-		u16 cnt = *(pNode++);
-		LvlCnt[level] += cnt;
-		if (LvlMax[level] < cnt)
-			LvlMax[level] = cnt;
-		if (level < depthTerm - 1)
-			FollowBranch(level + 1, *pNode);
-		pNode++;
-	}
-}
-
-u16 PermSet::TermStart(u16 _unsel)
-{
-	startLnk = (u16)freeTermLnk;
-	unsel = _unsel;
-	term = 0;
-	return startLnk;
-}
-
-void PermSet::TermEncode(int level, u16 chosenBit)
-{
-	// Find idx
-	u16 first;
-	u16 uns = unsel;
-	for (int idx = 0; uns != 0; idx++) {
-		if ((first = uns & (~uns + 1)) == chosenBit) {
-			//term |= (u16) (idx << ShiftTab[toBottom]);
-			term |= (u16)(idx << ((level - depthTerm) * 4));
-			return;
-		}
-		uns &= (~first);
-	}
-	assert(0);
-}
-
-void PermSet::TermOut()
-{
-	assert(freeTermLnk < POOLSZ);
-	if (TermPool != NULL)
-		TermPool[freeTermLnk] = term;
-	freeTermLnk++;
-	permCnt++;
-}
-
-u16 PermSet::TermEnd()
-{
-	return (u16)freeTermLnk - startLnk;
 }
 
 ///////////////////////////////////////////////////////
@@ -163,6 +22,8 @@ u16 PermSet::TermEnd()
 
 void PermSet::ExpAlloc()
 {
+	assert(ExpPool == 0);
+	assert(ExpTempPool == 0);
 	ExpPool = new u32[EXPPOOLSZ];
 	ExpTempPool = new u32[TEMPAREASZ * BLANKCNTMAX];
 	expBaseLnk = 0;
@@ -173,8 +34,10 @@ void PermSet::ExpAlloc()
 
 void PermSet::ExpDealloc()
 {
-	delete ExpPool;
-	delete ExpTempPool;
+	if (ExpPool)
+		delete ExpPool;
+	if (ExpTempPool)
+		delete ExpTempPool;
 }
 
 bool PermSet::ExpVerifyCounts()
@@ -674,17 +537,10 @@ void PermSet::Dump(ostream& out, bool doNodes) {
 		<< " nodes: " << setw(6) << nodeCnt
 		<< " singles: " << setw(6) << singleCnt;
 
-	if (format == SPLIT) {
-		out << "  SPLIT sz32:" << setw(6) << freeExpLnk;
-	}
-	else if (format == EXP) {
-		out << "  EXPANDED sz16:" << setw(6) << freeLnk
-			<< " termsz16:" << setw(6) << freeTermLnk;
-	}
-	else if (format == LVL) {
+	if (format == LVL) {
 		out << "  LEVEL sz32:" << setw(6) << lvlSz32;
 	}
-	out << (OutOflo() ? " OOOFFFLLLOOO" : "") << endl;
+	out << endl;
 
 	if (doNodes) {
 		out << "  NODES";
