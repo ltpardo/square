@@ -244,7 +244,7 @@ bool Consola::ProcessSearch(string& id, string& kind, string& level)
 			return false;
 	}
 	else
-		return false;
+	 	return false;
 	return true;
 }
 
