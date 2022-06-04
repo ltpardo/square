@@ -144,24 +144,81 @@ public:
 	}
 };
 
-class NEntry : public LogClient {
+class EntryBase : public LogClient {
+public:
+	EntryBase() : miss(0), missCnt(0), selV(0xFF), i(-1), j(-1)
+	{}
+
+	EntryBase(int _i, int _j) : miss(0), missCnt(0), selV(0xFF), i(_i), j(_j)
+	{}
+
+	Set miss;				// Possible values for entry
+	s8 missCnt;				// size of miss
+	u8 selV;				// Search value chosen
+
+	// Coords
+	s8 i, j;
+	void SetCoords(s8 _i, s8 _j) { i = _i; j = _j; }
+
+	// Set missing data
+	//	Extracts value set into Dict
+	void SetMissing(Set& crMiss, Set& thMiss, u8 Dict[], int dictSz) {
+		miss = crMiss & thMiss.mask;
+		missCnt = miss.ExtractValues(Dict, dictSz);
+	}
+
+	void DumpExpand(PermSet* pLnSet, LvlBranch lnUpBr, s8 lnLvl,
+		PermSet* pEdSet, LvlBranch edUpBr, s8 edLvl)
+	{
+		*DbgSt.pOut << pLnSet->searchId << " ";
+		pLnSet->DumpExpanded(*DbgSt.pOut, lnLvl, lnUpBr);
+		*DbgSt.pOut << " <<>> ";
+
+		*DbgSt.pOut << pEdSet->searchId << " ";
+		pEdSet->DumpExpanded(*DbgSt.pOut, edLvl, edUpBr);
+		*DbgSt.pOut << endl;
+	}
+
+	void DumpPull(u8 selV, PermSet* pLnSet, LvlBranch lnDnBr, s8 lnLvl,
+		PermSet* pEdSet, LvlBranch edDnBr, s8 edLvl)
+	{
+		*DbgSt.pOut << "PULL selV: " << (int) selV << " | ";
+		*DbgSt.pOut << pLnSet->searchId << " ";
+		pLnSet->DumpBranch(*DbgSt.pOut, lnLvl, lnDnBr);
+		*DbgSt.pOut << " <<>> ";
+
+		*DbgSt.pOut << pEdSet->searchId << " ";
+		pEdSet->DumpBranch(*DbgSt.pOut, edLvl, edDnBr);
+		*DbgSt.pOut << endl;
+	}
+};
+
+class NEntry : public EntryBase {
 public:
 	NEntry() : upThru(0), dnThru(0), upCross(0), dnCross(0),
-		miss(0), missCnt(0), selV(0xFF), i(-1), j(-1),
 		thLast(false), crLast(false),
 		thStart(false), crStart(false),
 		stkPos(SHRT_MIN), iCnt(-DIMMAX),
 		dLevel(INT_MIN), dLvlPos(INT_MIN), backPos(INT_MIN)
-	{}
+	{
+		SetCoords(0, 0);
+		miss = 0;
+		missCnt = 0;
+		selV = 0xFF;
+	}
 
 	const int INVALIDPOS = SHRT_MIN;
 	NEntry(int _i, int _j) : upThru(0), dnThru(0), upCross(0), dnCross(0),
-		miss(0), missCnt(0), selV(0xFF), i(_i), j(_j),
 		thLast(false), crLast(false),
 		thStart(false), crStart(false),
 		stkPos(INVALIDPOS), iCnt(INVALIDPOS),
 		dLevel(INT_MIN), dLvlPos(INT_MIN), backPos(INT_MIN)
-	{}
+	{
+		SetCoords(_i, _j);
+		miss = 0;
+		missCnt = 0;
+		selV = 0xFF;
+	}
 
 	// Linking: 
 	//		Axis are thru and cross
@@ -194,17 +251,17 @@ public:
 	int thLvl, crLvl;
 	NLane* pThru, * pCross;
 
-	Set miss;				// Possible values for entry
-	int missCnt;			// size of miss
+	//Set miss;				// Possible values for entry
+	//int missCnt;			// size of miss
+	//u8 selV;				// Search value chosen
 	u8 missV[BLANKCNTMAX];	// Expansion of miss
-	u8 selV;				// Search value chosen
 
 	bool thStart, crStart;	// (Reduction) Lanes start here
 	bool thLast, crLast;	// Lanes end here
 
 	// Coords: correspond to thru and cross lane indices
-	int i, j;
-	void SetCoords(int _i, int _j) { i = _i; j = _j; }
+	//s8 i, j;
+	//void SetCoords(int _i, int _j) { i = _i; j = _j; }
 
 	// Search data
 	PermSet* pThPSet;
@@ -321,7 +378,6 @@ public:
 	inline bool IsRedRestart() { return redBackDepth == RDEPTHRESTART;  }
 };
 
-
 class NStkEnt {
 public:
 	NStkEnt() {}
@@ -330,17 +386,81 @@ public:
 	LMask lMiss;
 };
 
-class NLane : public LogClient {
+class LaneFull : public LogClient {
 public:
-	NLane() : present(0), presCnt(0), missCnt(0), stops(0), blankCnt(0) {}
-	NLane(int _n) : n(_n) {}
-
-	void Init(int _n, int _idx, bool _isRow);
+	LaneFull() : present(0), presCnt(0), absMiss(0), missCnt(0), blankCnt(0)
+	{}
 
 	int n;
 	int idx;
 	bool isRow;
 	Mask all;
+
+	void Init(int _n, int _idx, bool _isRow, Mask _absMiss, s8 cnt) {
+		n = _n;
+		idx = _idx;
+		isRow = _isRow;
+		all = (1LL << n) - 1;
+		absMiss = _absMiss;
+		missCnt = cnt;
+		blankCnt = 0;
+	}
+
+	Set present;
+	int presCnt;
+	Set absMiss;
+	int missCnt;
+	LMask lMissing;		// Lane (local) set
+
+	void Present(u8 v);
+	void Missing(u8 v);
+	bool Check();
+
+	// Mapping local <-> abs
+	u8 VDict[BLANKCNTMAX];
+	void AbsToLocal();
+	LMask MapToLocal(Set abs);
+	LMask MapToLocal(u8* pV, int cnt);
+	void RemoveV(u8 v);
+
+	// Stack structure: 0 <= d < blankCnt
+	NStkEnt NStack[BLANKCNTMAX];
+	int blankCnt;
+	void BlankStk() { blankCnt = 0; }
+
+	// Add an entry to NStack
+	//	 Sets pPrev to NStack[blankCnt].pEnt
+	//   Returns stack level
+	s8 AddEnt(EntryBase *pEnt, u8 EntDict[], EntryBase * &pPrev);
+
+	// EXPANDED PSet
+	// Returns lnk to node and node cnt
+	PermExp* pExpSet;
+	LongLink GenExpSet();
+	bool CheckExpSet();
+
+	// LVL PSet is generated from EXPANDED PSet
+	PermSet PSet;
+	int GenPSet();
+	bool CheckPSet();
+
+	// Reference  PSet
+	ShortCnt refCnt;
+	PermSetRef* pRef;
+	int PermRefCreate();
+
+	// All sets generation
+	bool PermsGenAndCheck();
+
+	int PSetRestrictMiss();
+};
+
+class NLane : public LaneFull {
+public:
+	NLane() : stops(0) {}
+	NLane(int _n) : stops(0) { n = _n; }
+
+	void Init(int _n, int _idx, bool _isRow);
 
 	NEntry* pCur;
 	NEntry* pTermReturn;		// Return address for terminal nodes
@@ -430,51 +550,22 @@ public:
 	bool NextPermRedDnRow();
 	bool NextPermRedDnCol();
 
-	// Lane original openings
-	Set absMiss;		// Absolute set
-	LMask lMissing;		// Lane (local) set
-	int missCnt;
-
-	// Mapping local <-> abs
-	u8 VDict[BLANKCNTMAX];
-	void AbsToLocal();
-	LMask MapToLocal(Set abs);
-	LMask MapToLocal(u8* pV, int cnt);
-
 	// Stack structure: 0 <= d < blankCnt
-	NStkEnt NStack[BLANKCNTMAX];
-	int blankCnt;
+	//NStkEnt NStack[BLANKCNTMAX];
+	//int blankCnt;
 
 	// Aux vars
 	NEntry* pBlank;
 	int level;
 
-	// LVL PSet is generated from EXPANDED PSet
-	PermSet PSet;
-
-	// Reference  PSet
-	ShortCnt refCnt;
-	PermSetRef* pRef;
-	int PermRefCreate();
-	bool PermRefGen(int level, Mask sel, ShortCnt& cnt);
-
-	// EXPANDED PSet
-	// Returns lnk to node and node cnt
-	LongLink PermSetGenExpanded(int level, LMask sel, ShortCnt& cnt);
-
 	// Construction info and methods
 	//
 	void AddBlank(NEntry* pEnt);
-	void FillBlanks(NLane* Rows);
+	void FillBlanks(NLane* Rows, bool doPerms = true);
 	void LinkThru(NLane* Rows, NLane* Cols);
 	void LinkCross(NLane* Cols);
 	int RegenPSet();
-
-	Set present;
-	int presCnt;
-	void Present(u8 v);
-	void Missing(u8 v);
-	bool Check();
+	int PSetRestrictMiss();
 
 	// Ring info for rows  (accross)
 	NEntry ringHd;

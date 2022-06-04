@@ -5,6 +5,8 @@
 #include "stdinc.h"
 #include "senv.h"
 #include "nenv.h"
+#include "growenv.h"
+
 using namespace std;
 
 bool Consola::processCmd()
@@ -41,10 +43,13 @@ bool Consola::processCmd()
 		ProcessRead(Tokens[1], Tokens[2], Tokens[3], Tokens[4]);
 	}
 	else if (Tokens[0] == "readraw") {
-		ProcessReadRaw(Tokens[1], Tokens[2], Tokens[3]);
+		ProcessReadRaw(Tokens[1], Tokens[2], Tokens[3], Tokens[4]);
 	}
 	else if (Tokens[0] == "writeraw") {
 		ProcessWriteRaw(Tokens[1], Tokens[2]);
+	}
+	else if (Tokens[0] == "randgen") {
+		ProcessRandGen(Tokens[1], Tokens[2], Tokens[3], Tokens[4]);
 	}
 	else if (Tokens[0] == "uniquermv") {
 		ProcessUniqueRmv(Tokens[1], Tokens[2]);
@@ -52,8 +57,17 @@ bool Consola::processCmd()
 	else if (Tokens[0] == "count") {
 		ProcessCount(Tokens[1], Tokens[2], Tokens[3], Tokens[4], Tokens[5]);
 	}
+	else if (Tokens[0] == "perms") {
+		ProcessPerms(Tokens[1], Tokens[2], Tokens[3], Tokens[4], Tokens[5], Tokens[6]);
+	}
 	else if (Tokens[0] == "fill") {
 		ProcessFill(Tokens[1]);
+	}
+	else if (Tokens[0] == "fillents") {
+		ProcessFillEnts(Tokens[1]);
+	}
+	else if (Tokens[0] == "envpar") {
+		ProcessEnvPar(Tokens[1], Tokens[2]);
 	}
 	else if (Tokens[0] == "sort") {
 		ProcessSort(Tokens[1], Tokens[2]);
@@ -63,6 +77,9 @@ bool Consola::processCmd()
 	}
 	else if (Tokens[0] == "search") {
 		ProcessSearch(Tokens[1], Tokens[2], Tokens[3]);
+	}
+	else if (Tokens[0] == "testchg") {
+		ProcessTestChg(Tokens[1], Tokens[2], Tokens[3], Tokens[4]);
 	}
 	else if (Tokens[0] == "regen") {
 		ProcessRegen(Tokens[1]);
@@ -79,14 +96,14 @@ bool Consola::processCmd()
 
 	// Continue running console, according to retVal
 	return retVal;
-
 }
 
 bool Consola::ProcessDump(string& id, string& par, 
 	string& p0, string& p1, string& p2, string &p3)
 {
 	//SolveEnv* pS;
-	NEnv* pN;
+	EnvBase* pB;
+
 	if (id == "")
 		SymTab.LogClient::Dump();
 	else {
@@ -99,11 +116,12 @@ bool Consola::ProcessDump(string& id, string& par,
 				break;
 
 			case SymType::TYPNENV:
-				pN = (NEnv*)(pSym->pObj);
-				pN->DumpSet(0, p0 == "col");
-				pN->DumpSet(1, tokToInt(p1));
-				pN->DumpSet(2, tokToInt(p2));
-				pN->DumpSet(3, tokToInt(p3));
+			case SymType::TYPGENV:
+				pB = (EnvBase*)(pSym->pObj);
+				pB->DParsSet(0, p0 == "col");
+				pB->DParsSet(1, tokToInt(p1));
+				pB->DParsSet(2, tokToInt(p2));
+				pB->DParsSet(3, tokToInt(p3));
 				if (par == "mat")
 					kind = DUMPMAT;
 				else if (par == "lane")
@@ -116,8 +134,7 @@ bool Consola::ProcessDump(string& id, string& par,
 					kind = DUMPDIST;
 				else
 					return false;
-				pN->LogClient::Dump(kind);
-
+				pB->LogClient::Dump(kind);
 				break;
 
 			case SymType::TYPOBJ:
@@ -156,20 +173,79 @@ bool Consola::ProcessRead(string& id, string& fname, string& dim, string& t)
 	}
 }
 
-bool Consola::ProcessReadRaw(string& id, string& fname, string& sortMode)
+bool Consola::ProcessReadRaw(string& id, string& fname, string& kind, string& sortMode)
 {
-	NEnv* pNEnv = new NEnv();
+	if (kind == "grow") {
+		GEnv* pGEnv = new GEnv();
 
-	if (!pNEnv->ReadRaw(fname, sortMode)) {
-		cerr << "Cannot load " << datadir + fname << endl;
-		delete pNEnv;
-		return false;
+		if (!pGEnv->ReadRaw(fname, sortMode)) {
+			cerr << "Cannot load " << datadir + fname << endl;
+			delete pGEnv;
+			return false;
+		}
+		else {
+			SymTab.Add(id, SymType(SymType::TYPGENV), pGEnv, 0);
+			return true;
+		}
 	}
 	else {
-		SymTab.Add(id, SymType(SymType::TYPNENV), pNEnv, 0);
-		return true;
+		NEnv* pNEnv = new NEnv();
+
+		if (!pNEnv->ReadRaw(fname, sortMode)) {
+			cerr << "Cannot load " << datadir + fname << endl;
+			delete pNEnv;
+			return false;
+		}
+		else {
+			SymTab.Add(id, SymType(SymType::TYPNENV), pNEnv, 0);
+			return true;
+		}
 	}
 }
+
+bool Consola::ProcessRandGen(string& id, string& dim, string& blkPerLane, string& seed)
+{
+	int n = tokToInt(dim);
+	GEnv* pGEnv = new GEnv(n);
+	SymTab.Add(id, SymType(SymType::TYPGENV), pGEnv, 0);
+
+	return pGEnv->GenRaw(n, tokToInt(blkPerLane), tokToInt(seed));
+}
+
+bool Consola::ProcessTestChg(string& dim, string& blkPerLane, string& seedPar, string & cntPar)
+{
+	int n = tokToInt(dim);
+	int blankPerLane = tokToInt(blkPerLane);
+	int cnt = tokToInt(cntPar);
+
+	srand(tokToInt(seedPar));
+
+	int seed;
+	int cntNO, cntCHG;
+	for (int i = 0; i < cnt; i++) {
+		GEnv* pG = new GEnv(n);
+		seed = rand();
+		srand(seed);
+
+		pG->GenRaw(n, blankPerLane, seed);
+		((EnvBase*)pG)->HistoScan();
+		pG->FillBlanks();
+
+		DbgSt.doChange = false;
+		cntNO = pG->Search();
+
+		DbgSt.doChange = true;
+		cntCHG = pG->Search();
+
+		if (cntNO != cntCHG) {
+			Report(" SEARCH DIFF seed cntNO cntCHG ", seed, cntNO, cntCHG);
+		}
+		else
+			Report(" SEARCH SAME seed cnt ", seed, cntNO);
+	}
+	return true;
+}
+
 
 bool Consola::ProcessWriteRaw(string& id, string& fname)
 {
@@ -202,20 +278,76 @@ bool Consola::ProcessUniqueRmv(string& id, string& fname)
 	return true;
 }
 
+bool Consola::ProcessEnvPar(string& par, string& val)
+{
+	return EPars.SetPar(par, val);
+}
+
+bool Consola::ProcessPerms(string& id, string& kind, string& doRow, string& lfrom, string& lto, string& doCheck)
+{
+	Symbol* pSym = SymTab.Find(id);
+	if (pSym == 0)
+		return false;
+	EnvBase* pB = (EnvBase*)pSym->pObj;
+	int k;
+	if (kind == "ref")
+		k = EnvBase::GENREF;
+	else if (kind == "exp")
+			k = EnvBase::GENEXP;
+	else if (kind == "lvl")
+		k = EnvBase::GENLVL;
+	else if (kind == "all")
+		k = EnvBase::GENALL;
+	else {
+		cerr << "BAD GEN KIND" << endl;
+		return false;
+	}
+	
+	pB->GenPerms(k, doRow == "row", tokToInt(lfrom), tokToInt(lto), doCheck == "check");
+	return true;
+}
+
 bool Consola::ProcessFill(string& id)
 {
-	//SolveEnv* pSEnv;
-	NEnv* pN;
 	Symbol* pSym = SymTab.Find(id);
 	if (pSym == 0)
 		return false;
 
 	if (pSym->typ.t == SymType::TYPNENV) {
-		pN = (NEnv*)pSym->pObj;
+		NEnv* pN = (NEnv*)pSym->pObj;
 		while (pN->NHisto.Fill() > 0)
 			;
+
 		pN->FillBlanks();
-		pN->RegenPSets();
+		//pN->RegenPSets();
+		return true;
+	}
+	else if (pSym->typ.t == SymType::TYPGENV) {
+		GEnv* pG = (GEnv*)pSym->pObj;
+		((EnvBase*)pG)->HistoScan();
+		((EnvBase *)pG)->LogClient::Dump(DUMPMAT);
+		pG->FillBlanks();
+		return true;
+	}
+
+	// Wrong object type
+	return false;
+}
+
+bool Consola::ProcessFillEnts(string& id)
+{
+	Symbol* pSym = SymTab.Find(id);
+	if (pSym == 0)
+		return false;
+
+	if (pSym->typ.t == SymType::TYPNENV) {
+		NEnv* pN = (NEnv*)pSym->pObj;
+		pN->FillEnts();
+		return true;
+	}
+	else if (pSym->typ.t == SymType::TYPGENV) {
+		GEnv* pG = (GEnv*)pSym->pObj;
+		pG->FillEnts();
 		return true;
 	}
 
@@ -242,6 +374,11 @@ bool Consola::ProcessSearch(string& id, string& kind, string& level)
 		}
 		else
 			return false;
+	}
+	else if (pSym->typ.t == SymType::TYPGENV) {
+		GEnv* pG = (GEnv*)pSym->pObj;
+		pG->Search();
+		return true;
 	}
 	else
 	 	return false;
@@ -295,11 +432,17 @@ bool Consola::ProcessDebug(string& par0, string& par1, string& par2)
 	else if (par0 == "comp") {
 		DbgSt.dumpExpand = cnt;
 	}
+	else if (par0 == "change") {
+		DbgSt.doChange = (cnt > 0);
+	}
 	else if (par0 == "term") {
 		DbgSt.dumpTerm = cnt;
 	}
 	else if (par0 == "single") {
 		DbgSt.dumpMakeSingle = cnt;
+	}
+	else if (par0 == "searchlim") {
+		DbgSt.searchLim = cnt;
 	}
 	else
 		cerr << " DEBUG bad param " << par0 << endl;

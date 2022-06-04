@@ -82,6 +82,7 @@ public:
 	bool CountIsOne() { return mask == GetFirst(); }
 	int Count() { return (int)__popcnt64(mask); }
 	bool Contains(int idx) { return Contains(BitMask(idx)); }
+	bool Contains(u8 v) { return Contains(BitMask(v)); }
 	bool Contains(Mask m) { return (mask & m) == m; }
 	bool Contains(Set s) { return Contains(s.mask); }
 
@@ -254,7 +255,10 @@ public:
 	}
 };
 
-enum { FASTMATDIMLOG = 6 };
+enum {
+	FASTMATDIMLOG = 6,
+	FASTMATDIM = 1 << FASTMATDIMLOG,
+};
 
 template < int DIMLOG, class T> class FastMatrix {
 public:
@@ -267,6 +271,16 @@ public:
 	}
 	inline T* operator[](int i) {
 		return Val + (i << DIMLOG);
+	}
+
+	void Preset(T v) {
+		for (int i = 0; i < dim; i++)
+			for (int j = 0; j < dim; j++)
+				(* this)(i, j) = v;
+	}
+
+	T* Address(int i, int j) {
+		return Val + ((i << DIMLOG) + j);
 	}
 };
 

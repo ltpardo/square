@@ -36,6 +36,12 @@
     <ClCompile Include="main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="growenv.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="latsqgen.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="basic.h">
@@ -63,6 +69,12 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="sets.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="growenv.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="matvis.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

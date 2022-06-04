@@ -112,7 +112,7 @@ bool NEntry::ThExpand(NEntry*& pReturn)
 				if (selV == upCross->selV)
 					cerr << "SINGLE SELV " << selV << endl;
 				crDnBr = pThPSet->CrBranches[0];
-				if (pThPSet->LvlGetCnt(thUpBr) == 1)
+				if (pThPSet->LvlCntIsOne(thUpBr))
 					ThTermReturn(pReturn);
 				ThSet = 0;
 				iCnt = 0;
@@ -368,11 +368,11 @@ bool NEntry::DExpand(NEntry*& pReturn, bool isRow)
 
 				// Check for singles
 				if (isRow) {
-					if (pCrPSet->LvlGetCnt(crUpBr) == 1)
+					if (pCrPSet->LvlCntIsOne(crUpBr))
 						CrTermReturn(pReturn);
 				}
 				else {
-					if (pThPSet->LvlGetCnt(thUpBr) == 1)
+					if (pThPSet->LvlCntIsOne(thUpBr))
 						ThTermReturn(pReturn);
 				}
 				ESt.Opt = 0;

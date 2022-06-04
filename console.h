@@ -21,7 +21,8 @@ public:
 		TYPDEVSPM,
 		TYPVAL, 
 		TYPSENV,
-		TYPNENV
+		TYPNENV,
+		TYPGENV
 	} kind;
 
 	SymType() : t(TYPEMPTY) {}
@@ -219,17 +220,22 @@ public:
 	bool processCmd();
 
 	// Command Processing
-	bool ProcessRead(string& id, string& fname, string &dim, string& t);
-	bool ProcessDump(string& id, string& kind, 
+	bool ProcessRandGen(string& id, string& dim, string& blkPerLane, string& seed);
+	bool ProcessTestChg(string& dim, string& blkPerLane, string& seed, string& cnt);
+	bool ProcessRead(string& id, string& fname, string& dim, string& t);
+	bool ProcessDump(string& id, string& kind,
 		string& p0, string& p1, string& p2, string& p3);
 	bool ProcessFill(string& id);
+	bool ProcessFillEnts(string& id);
+	bool ProcessPerms(string& id, string& kind, string& doRow, string& lfrom, string& lto, string& doCheck);
+	bool ProcessEnvPar(string& par, string & val);
 	bool ProcessRegen(string& id);
 	bool ProcessSort(string& id, string& par);
 	bool ProcessLink(string& id);
 	bool ProcessCount(string& id, string& lfrom, string& lto, string& ifrom, string& ito);
 	bool ProcessSearch(string& id, string &kind, string& level);
 	bool ProcessDebug(string& par0, string &par1, string& par2);
-	bool ProcessReadRaw(string& id, string& fname, string &sortMode);
+	bool ProcessReadRaw(string& id, string& fname, string &kind, string &sortMode);
 	bool ProcessWriteRaw(string& id, string& fname);
 	bool ProcessUniqueRmv(string& id, string& fname);
 

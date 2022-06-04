@@ -3,6 +3,30 @@
 #include "senv.h"
 #include "nlane.h"
 
+class EnvPars {
+public:
+	EnvPars() : refDir(""), makeRef(false), checkRef(false) {}
+
+	bool SetPar(string& name, string& val) {
+		bool valB = (val == "true");
+		if (name == "makeref")
+			makeRef = valB;
+		else if (name == "checkref")
+			checkRef = valB;
+		else if (name == "refdir")
+			refDir = val;
+		else
+			return false;
+		return true;
+	}
+
+	string refDir;
+	bool makeRef;
+	bool checkRef;
+};
+
+extern EnvPars EPars;
+
 class  RStkEnt {
 public:
 	RStkEnt() : hits(0), visits(0) {}
@@ -24,12 +48,84 @@ public:
 	}
 };
 
-class NEnv : public LogClient {
+class EnvBase : public LogClient {
+public:
+	EnvBase() {}
+
+	InOut<u8> IO;
+
+	int n;
+	FastMatrix<FASTMATDIMLOG, u8> Mat;
+	int blankCnt;			// Total blank Count
+
+	// Result Mat
+	FastMatrix<FASTMATDIMLOG, u8> RMat;
+	bool VerifyLatSq(FastMatrix<FASTMATDIMLOG, u8> &M);
+
+	int ColsPermCnt[DIMMAX];
+
+	bool Read(string& fname);
+	bool Read(char* fname);
+
+	void ReadLineRaw(ifstream& in, u8* pLine, int cnt);
+	bool InputRaw(string& fname, string sortMode);
+	bool SortRaw(bool ascending);
+
+	void OutLineRaw(ostream& out, u8* pLine, int i, int cnt);
+	bool WriteRaw(string& fname);
+
+	void RandGenRaw(int n, int blkCnt, int seed);
+	void ImportRaw(u8 Src[FASTMATDIM][FASTMATDIM]);
+
+	// Building
+	LaneFull* RowFull[DIMMAX];
+	LaneFull* ColFull[DIMMAX];
+
+	// Create all lane fulls
+	//  Fills *Full indices
+	void CreateFull();
+
+	// Compute absMiss and missCnt for all full lanes
+	// Compute blankCnt (# of blank entries in square
+	void BuildFull();
+
+	// Initial histo processing
+	Histo<LaneFull> NHisto;
+	void HistoScan();
+
+	virtual void FillEnts() = 0;
+	enum {
+		GENREF = 1,
+		GENEXP = 2,
+		GENLVL = 3,
+		GENALL = 4
+	};
+	void GenPerms(int kind, bool doRow, int idxFrom, int idxTo, bool doCheck);
+
+	enum { DPARMAX = 8 };
+	int DPars[DPARMAX];
+	bool DParsSet(int par, int parVal);
+
+	void Dump(ostream& out, int dumpType);
+
+	void DumpMat(ostream& out, FastMatrix<FASTMATDIMLOG, u8> &DMat);
+	void DumpMissing(ostream& out, const char *name) {
+		out << "MISSING " << name << endl;
+	}
+
+	virtual void DumpBack(ostream& out) { DumpMissing(out, "DumpBack"); }
+	virtual void DumpLane(ostream& out) { DumpMissing(out, "DumpLane"); }
+	virtual void DumpPSet(ostream& out) { DumpMissing(out, "DumpPSet"); }
+	virtual void DumpDist(ostream& out) { DumpMissing(out, "DumpDist"); }
+};
+
+class NEnv : public EnvBase {
 public:
 	NEnv() {}
 
-	NEnv(int _n) : n(_n)
+	NEnv(int _n) 
 	{
+		n = _n;
 		Init();
 	}
 
@@ -42,47 +138,30 @@ public:
 			Cols[l].Init(n, l, false);
 		}
 
-		NHisto.Init(n, Rows, Cols, &Mat);
+		NHisto.Init(n, RowFull, ColFull, &Mat);
 		RngTrack.pOutRep = &cout;
 	}
 
-	int n;
-	InOut<u8> IO;
-
-	FastMatrix<FASTMATDIMLOG, u8> Mat;
-	FastMatrix<FASTMATDIMLOG, u8> MatCpy;
 	NLane* Rows;
 	NLane* Cols;
-	int ColsPermCnt[DIMMAX];
 
-	bool Read(string& fname);
-	bool Read(char* fname);
 
-	void ReadLineRaw(ifstream& in, u8* pLine, int cnt);
+	// Dump methods
+	virtual void DumpLane(ostream& out);
+	virtual void DumpPSet(ostream& out);
+	virtual void DumpBack(ostream& out);
+	virtual void DumpDist(ostream& out);
+
+	// BUilding
+	//
 	bool ReadRaw(string& fname, string sortMode);
-	bool SortRaw(bool ascending);
-
-	void OutLineRaw(ostream& out, u8* pLine, int i, int cnt);
-	bool WriteRaw(string& fname);
-
-	enum { DPARMAX = 8 };
-	int DPars[DPARMAX];
-	bool DumpSet(int par, int parVal);
-	bool DumpLane(ostream& out);
-	bool DumpPSet(ostream& out);
-	void DumpMat(ostream& out);
-	void DumpBack(ostream& out);
-	void DumpDist(ostream& out);
 	void ProcessMat();
-
-	int blankCnt;			// Total blank Count
 	void FillBlanks();
 	int RegenPSets();
 	int UniqueRemove();
-
-	NEntry* pFirst;
-	NEntry* pLast;
 	void LinkBlanks();
+
+	virtual void FillEnts();
 
 	// Entry based search
 	int solveCnt;
@@ -99,11 +178,6 @@ public:
 	void SearchThruDump(bool isDown);
 
 	RangeTrack RngTrack;
-
-	// Initial histo processing
-	Histo<NLane> NHisto;
-
-	void Dump(ostream& out, int dumpType);
 
 	// Compute Search Distances
 	int distMax;
@@ -124,6 +198,7 @@ public:
 	bool SearchDSuccess();
 
 	// Distance Search
+	//
 	int dLevel;
 	int dPos;
 	BitSet* pBSet;
@@ -133,6 +208,7 @@ public:
 	int SearchD();
 
 	// Reduction Search
+	//
 	int level;
 	bool fromAbove;
 	int mode;

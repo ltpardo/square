@@ -1,5 +1,6 @@
 #include "stdinc.h"
 #include "nlane.h"
+#include "nenv.h"
 
 void PermSet::Init(int _depth, int _termHt, bool countOnly)
 {
@@ -7,90 +8,147 @@ void PermSet::Init(int _depth, int _termHt, bool countOnly)
 	termHt = _termHt;
 	depthTerm = depth - termHt;
 
-	InitCounts();
-	InitTotals();
+	Counts.InitLevels();
+	Counts.InitTotals(_depth);
 
-	ExpPool = 0;
-	ExpTempPool = 0;
-
-	outOflo = false;
+	pExpSet = 0;
 }
 
 ///////////////////////////////////////////////////////
 //		EXPANDED PSET
 ///////////////////////////////////////////////////////
 
-void PermSet::ExpAlloc()
+void PermExp::Alloc()
 {
-	assert(ExpPool == 0);
-	assert(ExpTempPool == 0);
-	ExpPool = new u32[EXPPOOLSZ];
-	ExpTempPool = new u32[TEMPAREASZ * BLANKCNTMAX];
-	expBaseLnk = 0;
-	freeExpLnk = 0;
-	outOflo = false;
-	format = SPLIT;
+	assert(Pool == 0);
+	assert(TempPool == 0);
+	Pool = new u32[POOLSZ];
+	TempPool = new u32[TEMPAREASZ * BLANKCNTMAX];
+	baseLnk = 0;
+	freeLnk = 0;
 }
 
-void PermSet::ExpDealloc()
+void PermExp::Dealloc()
 {
-	if (ExpPool)
-		delete ExpPool;
-	if (ExpTempPool)
-		delete ExpTempPool;
+	if (Pool)
+		delete Pool;
+	if (TempPool)
+		delete TempPool;
 }
 
-bool PermSet::ExpVerifyCounts()
+// Returns lnk to node and node cnt
+//	Input: lane lMissing and stack[level].lMiss
+//
+LongLink PermExp::Gen(int level, LMask sel, ShortCnt& cnt)
 {
-	InitCounts();
-	ExpFollowBranch(0, baseLnk);
-	return CheckCounts();
+	LongLink branch;
+
+	LMask chosenBit;
+	LMask unsel = lMissing & (~sel);
+	LMask choice = pMiss[level] & unsel;
+	LMask nextSel;
+
+	if (choice == 0)
+		// Exhausted branch
+		return PermSet::LONGLNKNULL;
+
+	if (level == missCnt - 1) {
+		// At Bottom
+		assert(choice == (choice & (~choice + 1)));
+		// Returns mask
+		cnt = 1;
+		Counts.permCnt++;
+		return choice;
+	}
+
+	// Internal branch: iterate through all descendants
+	ShortLink nodeCnt = 0;
+	LongLink* pTemp = NodeStart(level);
+	ShortCnt vMask = 0;
+	ShortCnt branchCnt;
+
+	do {
+		// Extract candidate from choiceSet
+		chosenBit = choice & (~choice + 1);
+		choice &= ~chosenBit;
+		nextSel = sel | chosenBit;
+
+		if ((branch = Gen(level + 1, nextSel, branchCnt)) == PermSet::LONGLNKNULL)
+			// Branch is not viable
+			continue;
+
+		if (level >= missCnt - 2) {
+			// Bottom branch: 
+			pTemp = NodeBotBranch(pTemp, branch);
+		}
+		else {
+			// Intermediate level - tree zone
+			pTemp = NodeBranch(pTemp, branchCnt, branch);
+		}
+		nodeCnt += branchCnt;
+		vMask |= chosenBit;
+	} while (choice != 0);
+
+	// Create tree node and return
+	if (nodeCnt > 0) {
+		cnt = nodeCnt;
+		return NodeEnd(level, pTemp, nodeCnt, vMask);
+	}
+	else
+		return PermSet::LONGLNKNULL;
 }
 
-void PermSet::ExpFollowBranch(int level, LongLink lnk)
+bool PermExp::VerifyCounts()
 {
-	LongLink* pNode = ExpPool + lnk;
+	Counts.InitLevels();
+	FollowBranch(0, baseLnk);
+	return Counts.CheckCounts();
+}
+
+void PermExp::FollowBranch(int level, LongLink lnk)
+{
+	LongLink* pNode = Pool + lnk;
 	u16 mask = (u16)(*pNode++);
 	u16 nodeCnt = __popcnt16(mask);
 
 	assert(nodeCnt <= depth);
 	for (int l = 0; l < nodeCnt; l++) {
 		int cnt = (level >= depth - 2) ? 1 : *(pNode++);
-		LvlCnt[level] += cnt;
-		if (LvlMax[level] < cnt)
-			LvlMax[level] = cnt;
+		Counts.LvlCnt[level] += cnt;
+		if (Counts.LvlMax[level] < cnt)
+			Counts.LvlMax[level] = cnt;
 		if (level < depth - 2)
-			ExpFollowBranch(level + 1, *pNode);
+			FollowBranch(level + 1, *pNode);
 		pNode++;
 	}
 }
 
-LongLink* PermSet::ExpTempArea(int level) {
-	return ExpTempPool + level * TEMPAREASZ;
+LongLink* PermExp::TempArea(int level) {
+	return TempPool + level * TEMPAREASZ;
 }
 
-LongLink* PermSet::NodeExpStart(int level) {
-	return ExpTempArea(level) + 1;
+LongLink* PermExp::NodeStart(int level) {
+	return TempArea(level) + 1;
 }
 
-LongLink* PermSet::NodeExpBranch(LongLink* pTemp, ShortCnt cnt, LongLink lnk) {
+LongLink* PermExp::NodeBranch(LongLink* pTemp, ShortCnt cnt, LongLink lnk) {
 	*(pTemp++) = cnt;
 	*(pTemp++) = lnk;
 	return pTemp;
 }
 
-LongLink* PermSet::NodeExpBotBranch(LongLink* pTemp, LongLink mask) {
+LongLink* PermExp::NodeBotBranch(LongLink* pTemp, LongLink mask) {
 	*(pTemp++) = mask;
 	return pTemp;
 }
 
-LongLink PermSet::NodeExpEnd(int level, LongLink* pEnd, ShortCnt cnt, ShortCnt vMask) {
-	LongLink* pTemp = ExpTempArea(level);
-	nodeCnt++;
-	NodeCnt[level]++;
+LongLink PermExp::NodeEnd(int level, LongLink* pEnd, ShortCnt cnt, ShortCnt vMask) {
+	LongLink* pTemp = TempArea(level);
+	Counts.nodeCnt++;
+	Counts.NodeCnt[level]++;
 	if (cnt == 1) {
-		SingleCnt[level]++;
-		singleCnt++;
+		Counts.SingleCnt[level]++;
+		Counts.singleCnt++;
 	}
 
 	ShortCnt sz = (ShortCnt)(pEnd - pTemp);
@@ -98,15 +156,15 @@ LongLink PermSet::NodeExpEnd(int level, LongLink* pEnd, ShortCnt cnt, ShortCnt v
 
 	LongLink* pPool;
 	// Store node in ExpPool area
-	pPool = ExpPool + freeExpLnk;
-	baseLnk = freeExpLnk;
-	freeExpLnk += sz;
-	if (freeExpLnk >= EXPPOOLSZ) {
-		outOflo = true;
-		return PermSet::LONGLNKNULL;
+	pPool = Pool + freeLnk;
+	baseLnk = freeLnk;
+	freeLnk += sz;
+	if (freeLnk >= POOLSZ) {
+		Counts.outOflo = true;
+		return LONGLNKNULL;
 	}
 	*(pTemp) = vMask;
-	if (ExpPool != NULL) {
+	if (Pool != NULL) {
 		while (pTemp < pEnd) {
 			*(pPool++) = *(pTemp++);
 		}
@@ -114,6 +172,41 @@ LongLink PermSet::NodeExpEnd(int level, LongLink* pEnd, ShortCnt cnt, ShortCnt v
 	return baseLnk;
 }
 
+
+bool PermExp::CheckRef(PermSetRef* _pRef)
+{
+	pChkRef = _pRef;
+	pChkRef->ReadOpen();
+	Visit(0, baseLnk);
+	pChkRef->ReadClose();
+	return pChkRef->errCnt <= 0;
+}
+
+bool PermExp::Visit(int level, LongLink lnk)
+{
+	LongLink* pNode = Pool + lnk;
+	u16 mask = (u16)(*pNode++);
+	u16 branchCnt = __popcnt16(mask);
+	int lV;
+
+	for (int l = 0; mask != 0; l++) {
+		lV = V[Set16::ExtractIdx(mask)];
+		VisitV[level] = lV;
+		int cnt = (level >= depth - 2) ? 1 : *(pNode++);
+
+		if (level < depth - 2) {
+			Visit(level + 1, *pNode);
+		}
+		else if (level == depth - 2) {
+			lV = V[Set16::GetFirstIdx((u16)(*pNode))];
+			VisitV[level + 1] = lV;
+			VisitProcess();
+		}
+		pNode++;
+	}
+
+	return false;
+}
 
 ///////////////////////////////////////////////////////
 //		LEVELED PSET
@@ -149,10 +242,11 @@ LvlBranch PermSet::LvlMakeSingle(int level, LongLink nodeLnk, u16 permMask)
 		lV = Set16::ExtractIdx(permMask);
 		lV = V[lV];
 		branch |= (lV << shift);
+		Counts.LvlCnt[level]++;
 	}
 	else {
 		for (lvl = level; lvl <= depth - 2; lvl++) {
-			pNode = ExpPool + nodeLnk;
+			pNode = pExpSet->Pool + nodeLnk;
 			nodeMask = (u16)(*pNode++);
 			permMask &= (~nodeMask);
 			lV = V[Set16::ExtractIdx(nodeMask)];
@@ -165,7 +259,7 @@ LvlBranch PermSet::LvlMakeSingle(int level, LongLink nodeLnk, u16 permMask)
 			branch |= (lV << shift);
 			shift += LVSZ1;
 
-			LvlCnt[lvl]++;
+			Counts.LvlCnt[lvl]++;
 			if (lvl < depth - 2) {
 				assert(*pNode == 1);
 				pNode++;
@@ -185,13 +279,13 @@ LvlBranch PermSet::LvlMakeSingle(int level, LongLink nodeLnk, u16 permMask)
 				assert(nodeMask == 0);
 				assert(permMask == 0);
 				branch |= (lV << shift);
-				LvlCnt[lvl + 1]++;
+				Counts.LvlCnt[lvl + 1]++;
 				break;
 			}
 		}
 	}
 	assert(shift <= sizeof(LvlBranch) * 8 - LVSZ1);
-	permCnt++;
+	Counts.permCnt++;
 
 #ifdef DBGREL
 	if (DbgSt.DmpMakeSingle())
@@ -200,27 +294,27 @@ LvlBranch PermSet::LvlMakeSingle(int level, LongLink nodeLnk, u16 permMask)
 	return branch | BTERMBIT;
 }
 
-void PermSet::LvlFromExp(u16 permMask)
+void PermSet::LvlFromExp(PermExp *_pExpSet, u16 permMask)
 {
+	pExpSet = _pExpSet;
 	minLvlForSingles = depth - SINGLESZ4;
 	LvlAlloc();
-	InitCounts();
-	InitTotals();
+	Counts.InitLevels();
+	Counts.InitTotals(depth);
 
-	LvlBranch base = LvlExpVisit(0, baseLnk, permMask);
+	LvlBranch base = LvlExpVisit(0, pExpSet->baseLnk, permMask);
 
 	// Resulting tree starts at LvlBase[0]
 	LvlStore->CopyLinear(LvlBase);
-	if (!CheckCounts())
+	if (!Counts.CheckCounts())
 		cerr << "LVL FROM EXP: Bad check counts" << endl;
-	format = LVL;
 	lvlSz32 = LvlStore->totalSz;
 	delete LvlStore;
 }
 
 LvlBranch PermSet::LvlExpVisit(int level, LongLink nodeLnk, u16 permMask)
 {
-	LongLink* pNode = ExpPool + nodeLnk;
+	LongLink* pNode = pExpSet->Pool + nodeLnk;
 	u16 mask = (u16)(*pNode++);
 	u16 curMask;
 	u16 branchCnt = __popcnt16(mask);
@@ -235,11 +329,11 @@ LvlBranch PermSet::LvlExpVisit(int level, LongLink nodeLnk, u16 permMask)
 		int cnt = (level >= depth - 2) ? 1 : *(pNode++);
 		childrenCnt += cnt;
 		if (cnt == 1)
-			singleCnt++;
+			Counts.singleCnt++;
 		if (cnt == 1 && level >= minLvlForSingles) {
 			// Single
 			branch = LvlMakeSingle(level + 1, *pNode, curMask);
-			SingleCnt[level]++;
+			Counts.SingleCnt[level]++;
 
 		}
 		else if (level < depth - 2) {
@@ -249,16 +343,16 @@ LvlBranch PermSet::LvlExpVisit(int level, LongLink nodeLnk, u16 permMask)
 			// Here we only have singles (cnt == 1)
 			assert(0);
 		}
-		if (LvlMax[level] < cnt)
-			LvlMax[level] = cnt;
+		if (Counts.LvlMax[level] < cnt)
+			Counts.LvlMax[level] = cnt;
 		LvlBranchFinish(branch, V[lV], mask == 0);
 		LNode[l] = branch;
 		pNode++;
 	}
 
-	LvlCnt[level] += childrenCnt;
-	NodeCnt[level]++;
-	nodeCnt++;
+	Counts.LvlCnt[level] += childrenCnt;
+	Counts.NodeCnt[level]++;
+	Counts.nodeCnt++;
 	int lvlDisp = LvlStore->Store(LNode, level, branchCnt);
 	branch = LvlBranchTiered(childrenCnt, lvlDisp);
 	return branch;
@@ -293,11 +387,11 @@ LvlBranch PermSet::LvlBranchAdv(int lvl, LvlBranch inBranch, u8 v)
 int PermSet::LvlIntersect(LvlBranch* pT, LvlBranch* pC, Set& ThSet)
 {
 	iCnt = 0;
-	ThSet = 0;
+	//ThSet = 0;
 	LvlBranch brT = *pT++;
 	LvlBranch brC = *pC++;
 	u8 vT = LvlGetV(brT);
-	ThSet += vT;
+	//ThSet += vT;
 	u8 vC = LvlGetV(brC);
 	for (;;) {
 		if (vT <= vC) {
@@ -313,7 +407,7 @@ int PermSet::LvlIntersect(LvlBranch* pT, LvlBranch* pC, Set& ThSet)
 					while (!LvlIsLast(brT)) {
 						brT = *pT++;
 						vT = LvlGetV(brT);
-						ThSet += vT;
+						//ThSet += vT;
 					}
 					break;
 				}
@@ -321,7 +415,7 @@ int PermSet::LvlIntersect(LvlBranch* pT, LvlBranch* pC, Set& ThSet)
 					break; 
 				brT = *pT++;
 				vT = LvlGetV(brT);
-				ThSet += vT;
+				//ThSet += vT;
 				brC = *pC++;
 				vC = LvlGetV(brC);
 			}
@@ -330,7 +424,7 @@ int PermSet::LvlIntersect(LvlBranch* pT, LvlBranch* pC, Set& ThSet)
 					break;
 				brT = *pT++;
 				vT = LvlGetV(brT);
-				ThSet += vT;
+				//ThSet += vT;
 			}
 		}
 		else {
@@ -339,7 +433,7 @@ int PermSet::LvlIntersect(LvlBranch* pT, LvlBranch* pC, Set& ThSet)
 				while (!LvlIsLast(brT)) {
 					brT = *pT++;
 					vT = LvlGetV(brT);
-					ThSet += vT;
+					//ThSet += vT;
 				}
 				break;
 			}
@@ -356,12 +450,6 @@ void PermSet::LvlSortInter()
 	PSort.Sort(iCnt);
 }
 
-bool PermSet::VisitProcess()
-{
-	if (pRef != NULL) {
-		if (!pRef->Read())
-			return false;
-		if (!pRef->Compare(VisitV)) {
 #ifdef DBGREL
 			if (DbgSt.DmpCompare()) {
 				*(DbgSt.pOut) << " Diff term " << pRef->readCnt;
@@ -376,6 +464,13 @@ bool PermSet::VisitProcess()
 			}
 #endif
 
+bool PermBase::VisitProcess()
+{
+	if (pChkRef != NULL) {
+		if (!pChkRef->Read())
+			return false;
+		if (!pChkRef->Compare(VisitV)) {
+			// Coukd use dump code above
 			return false;
 		}
 		else
@@ -397,12 +492,6 @@ bool PermSet::LvlVisitTerm(int level, LvlBranch br)
 	return VisitProcess();
 }
 
-bool PermSet::LvlVisit(int level, LvlBranch* pNode)
-{
-	LvlBranch br;
-	do {
-		br = *pNode++;
-		if (LvlIsTerm(br)) {
 #ifdef DBGREL
 			if (DbgSt.DmpTerm()) {
 				*(DbgSt.pOut) << " Term " << pRef->readCnt << " lvl " << level << "  br ";
@@ -410,6 +499,14 @@ bool PermSet::LvlVisit(int level, LvlBranch* pNode)
 				*(DbgSt.pOut) << endl;
 			}
 #endif
+
+bool PermSet::LvlVisit(int level, LvlBranch* pNode)
+{
+	LvlBranch br;
+	do {
+		br = *pNode++;
+		if (LvlIsTerm(br)) {
+			// Dump code?
 			LvlVisitTerm(level, br);
 		}
 		else {
@@ -421,65 +518,27 @@ bool PermSet::LvlVisit(int level, LvlBranch* pNode)
 	return true;;
 }
 
-int PermSet::LvlSetMiss(NLane* pLane)
-{
-	pRef = 0;
-	for (int d = 0; d < depth; d++) {
-		VisitMiss[d] = 0;
-	}
-	LvlVisit(0, BranchPtr(0, (ShortLink)0));
-	NEntry* pEnt;
-	int chgCnt = 0;
-	for (int d = 0; d < pLane->blankCnt; d++) {
-		pEnt = pLane->NStack[d].pEnt;
-		assert(pEnt->miss >= VisitMiss[d]);
-		int mCnt = pEnt->miss.Count();
-		int vCnt = VisitMiss[d].Count();
-		MissDel[d] = mCnt - vCnt;
-		if (MissDel[d] > 0) {
-			pLane->Report(
-				isRow ? "  ROW CHG idx/d/cnt " : "  COL CHG idx/d/cnt ",
-				idx, d, vCnt);
-		}
-		if (vCnt == 1) {
-			pLane->Report(
-				isRow ? "  ROW UNIQUE idx/d/i/j " : "  COL UNIQUE idx/di/j ",
-				idx, d, pEnt->i, pEnt->j);
-		}
-		chgCnt += MissDel[d];
-		// Restrict entry miss
-		pEnt->miss = VisitMiss[d];
-		pEnt->missCnt =
-			pEnt->miss.ExtractValues(pEnt->missV, sizeof(pEnt->missV));
-
-		pLane->NStack[d].lMiss =
-			pLane->MapToLocal(pEnt->missV, pEnt->missCnt);
-	}
-
-	return chgCnt;
-}
-
 bool PermSet::LvlCheckRef(PermSetRef* _pRef)
 {
-	pRef = _pRef;
-	pRef->ReadOpen();
+	pChkRef = _pRef;
+	pChkRef->ReadOpen();
 	LvlVisit(0, BranchPtr(0, (ShortLink)0));
-	pRef->ReadClose();
-	return pRef->errCnt <= 0;
+	pChkRef->ReadClose();
+	return pChkRef->errCnt <= 0;
 }
 
 bool PermSet::ExpCheckRef(PermSetRef* _pRef)
 {
-	pRef = _pRef;
-	pRef->ReadOpen();
+	pChkRef = _pRef;
+	pChkRef->ReadOpen();
 	ExpVisit(0, baseLnk);
-	pRef->ReadClose();
-	return pRef->errCnt <= 0;
+	pChkRef->ReadClose();
+	return pChkRef->errCnt <= 0;
 }
 
 bool PermSet::ExpVisit(int level, LongLink lnk)
 {
-	LongLink* pNode = ExpPool + lnk;
+	LongLink* pNode = pExpSet->Pool + lnk;
 	u16 mask = (u16)(*pNode++);
 	u16 branchCnt = __popcnt16(mask);
 	int lV;
@@ -503,7 +562,7 @@ bool PermSet::ExpVisit(int level, LongLink lnk)
 	return false;
 }
 
-void  PermSet::InitCounts()
+void  PermCounts::InitLevels()
 {
 	for (int d = 0; d < depth; d++) {
 		LvlCnt[d] = 0;
@@ -513,14 +572,17 @@ void  PermSet::InitCounts()
 	}
 }
 
-void  PermSet::InitTotals()
+void  PermCounts::InitTotals(int _depth)
 {
+	depth = _depth;
+	depthTerm = depth;
 	permCnt = 0;
 	nodeCnt = 0;
 	singleCnt = 0;
+	outOflo = false;
 }
 
-bool  PermSet::CheckCounts()
+bool  PermCounts::CheckCounts()
 {
 	for (int d = 0; d < depthTerm; d++) {
 		if (LvlCnt[d] != permCnt) {
@@ -533,27 +595,25 @@ bool  PermSet::CheckCounts()
 }
 
 void PermSet::Dump(ostream& out, bool doNodes) {
-	out << " cnt: " << setw(6) << permCnt
-		<< " nodes: " << setw(6) << nodeCnt
-		<< " singles: " << setw(6) << singleCnt;
+	out << " cnt: " << setw(6) << Counts.permCnt
+		<< " nodes: " << setw(6) << Counts.nodeCnt
+		<< " singles: " << setw(6) << Counts.singleCnt;
 
-	if (format == LVL) {
-		out << "  LEVEL sz32:" << setw(6) << lvlSz32;
-	}
+	out << "  LEVEL sz32:" << setw(6) << lvlSz32;
 	out << endl;
 
 	if (doNodes) {
 		out << "  NODES";
 		for (int d = 0; d < depth - 1; d++)
-			out << "," << setw(5) << NodeCnt[d];
+			out << "," << setw(5) << Counts.NodeCnt[d];
 		out << endl;
 		out << "  SINGS";
 		for (int d = 0; d < depth - 1; d++)
-			out << "," << setw(5) << SingleCnt[d];
+			out << "," << setw(5) << Counts.SingleCnt[d];
 		out << endl;
 		out << "  LVMAX";
 		for (int d = 0; d < depth - 1; d++)
-			out << "," << setw(5) << LvlMax[d];
+			out << "," << setw(5) << Counts.LvlMax[d];
 		out << endl;
 		out << "  MSCNT";
 		for (int d = 0; d < depth - 1; d++)
@@ -609,7 +669,7 @@ void PermSet::DumpLvl(ostream& out, int lvl)
 	LvlBranch *pBr = LvlBase[lvl];
 	string lead = "   ";
 	out << endl << lead;
-	for (int node = 0; node < NodeCnt[lvl]; node ++) {
+	for (int node = 0; node < Counts.NodeCnt[lvl]; node ++) {
 		DumpNodeId(out, lvl, disp);
 		out << " ";
 		do {
@@ -619,7 +679,7 @@ void PermSet::DumpLvl(ostream& out, int lvl)
 		} while (!LvlIsLast(br));
 		if ((node & 1) == 1)
 			out << endl << lead;
-		else if (node < NodeCnt[lvl] - 1)
+		else if (node < Counts.NodeCnt[lvl] - 1)
 			out << " | ";
 	}
 	out << endl;
@@ -646,15 +706,15 @@ void PermSet::DumpExpanded(ostream& out, int lvl, LvlBranch br)
 }
 
 
-void PermSetRef::Name(char* dirName)
+void PermSetRef::Name()
 {
-	if (dirName != NULL) {
-		fname = dirName;
+	if (EPars.refDir != "") {
+		fname = EPars.refDir;
 		fname += "\\";
 	}
 	fname += isRow ? "Row_" : "Col_";
 	char idxStr[10];
-	sprintf_s(idxStr, "%2d", idx);
+	sprintf_s(idxStr, "%2.2d", idx);
 	fname += idxStr;
 	fname += ".txt";
 }
@@ -710,6 +770,43 @@ void PermSetRef::ReadClose()
 {
 	assert(in.is_open());
 	in.close();
+}
+
+bool PermSetRef::Gen(int level, Mask sel, ShortCnt& cnt)
+{
+	Mask chosenBit;
+	Mask unsel = totalMiss & (~sel);
+	Mask choice = pMissTab[level].mask & unsel;
+
+	if (choice == 0)
+		// Exhausted branch
+		return false;
+
+	Mask nextSel;
+	ShortCnt brCnt;
+	bool notEmpty = false;
+	do {
+		// Extract level value from choiceSet
+		chosenBit = choice & (~choice + 1);
+		V[level] = Set::GetIdx(chosenBit);
+		choice &= ~chosenBit;
+		if (level == depth - 1) {
+			// At Bottom
+			assert(choice == 0);
+			Out();
+			return true;
+		}
+
+		nextSel = sel | chosenBit;
+		if (!Gen(level + 1, nextSel, brCnt)) {
+			// Branch is not viable
+			continue;
+		}
+		cnt += brCnt;
+		notEmpty = true;
+	} while (choice != 0);
+
+	return notEmpty;
 }
 
 void Sorter::Sort(SortIdx _n)

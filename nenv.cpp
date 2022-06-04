@@ -4,7 +4,10 @@
 using namespace std;
 SolveStack SStk;
 
-bool NEnv::Read(string& fname)
+// Auxiliary modules
+LatSqGen LSGen;
+
+bool EnvBase::Read(string& fname)
 {
 	IO.ReadOpen(fname);
 	for (int i = 0; i < n; i++) {
@@ -14,7 +17,7 @@ bool NEnv::Read(string& fname)
 	return true;
 }
 
-bool NEnv::Read(char* fname)
+bool EnvBase::Read(char* fname)
 {
 	IO.ReadOpen(fname);
 	for (int i = 0; i < n; i++) {
@@ -24,7 +27,7 @@ bool NEnv::Read(char* fname)
 	return true;
 }
 
-void NEnv::ReadLineRaw(ifstream &in, u8* pLine, int cnt)
+void EnvBase::ReadLineRaw(ifstream &in, u8* pLine, int cnt)
 {
 	int i;
 	int v;
@@ -35,7 +38,7 @@ void NEnv::ReadLineRaw(ifstream &in, u8* pLine, int cnt)
 	}
 }
 
-void NEnv::OutLineRaw(ostream& out, u8* pLine, int i, int cnt)
+void EnvBase::OutLineRaw(ostream& out, u8* pLine, int i, int cnt)
 {
 	out << setw(2) << i << " ";
 	for (int j = 0; j < cnt; j++) {
@@ -44,13 +47,12 @@ void NEnv::OutLineRaw(ostream& out, u8* pLine, int i, int cnt)
 	out << endl;
 }
 
-bool NEnv::ReadRaw(string& fname, string sortMode)
+bool EnvBase::InputRaw(string& fname, string sortMode)
 {
 	ifstream in(fname);
 	if (!in.is_open())
 		return false;
 	in >> n;
-	Init();
 
 	for (int i = 0; i < n; i++) {
 		ReadLineRaw(in, Mat[i], n);
@@ -68,14 +70,29 @@ bool NEnv::ReadRaw(string& fname, string sortMode)
 		SortRaw(false);
 	}
 
-	ProcessMat();
 	return true;
+}
+
+void EnvBase::RandGenRaw(int n, int blkCnt, int seed)
+{
+	if (seed > 0)
+		LSGen.Seed(seed);
+	LSGen.Gen(n);
+	LSGen.Blank(blkCnt);
+	ImportRaw(LSGen.blk);
+}
+
+void EnvBase::ImportRaw(u8 Src[FASTMATDIM][FASTMATDIM])
+{
+	for (int i = 0; i < n; i++)
+		for (int j = 0; j < n; j++)
+			Mat[i][j] = Src[i][j];
 }
 
 bool SortCompUp(u32 a, u32 b) { return a <= b; }
 bool SortCompDn(u32 a, u32 b) { return a >= b; }
 
-bool NEnv::SortRaw(bool ascending)
+bool EnvBase::SortRaw(bool ascending)
 {
 	u32 SortTab[DIMMAX];
 	FastMatrix<FASTMATDIMLOG, u8> MatAux;
@@ -98,7 +115,7 @@ bool NEnv::SortRaw(bool ascending)
 	return true;
 }
 
-bool NEnv::WriteRaw(string& fname)
+bool EnvBase::WriteRaw(string& fname)
 {
 	ofstream *pOut;
 	pOut = new std::ofstream(fname);
@@ -118,8 +135,152 @@ bool NEnv::WriteRaw(string& fname)
 	return true;
 }
 
+// Static Histo scan
+//  Eliminates single value blanks
+//  Recomputes lanes absMiss and missCnt
+//  Refills lanes VDict
+//
+void EnvBase::HistoScan()
+{
+	while (NHisto.Fill() > 0)
+		;
 
-void Histo<NLane>::Start()
+	// Fill VDict for all full lanes
+    // Compute total blank count
+    blankCnt = 0;
+	for (int l = 0; l < n; l++) {
+		RowFull[l]->AbsToLocal();
+		ColFull[l]->AbsToLocal();
+		blankCnt += ColFull[l]->missCnt;
+	}
+}
+
+// Create all lane fulls
+//  Fill *Full indices
+//
+void EnvBase::CreateFull()
+{
+	LaneFull* pRowFull = new LaneFull[n];
+	LaneFull* pColFull = new LaneFull[n];
+
+	for (int l = 0; l < n; l++) {
+		RowFull[l] = pRowFull + l;
+		ColFull[l] = pColFull + l;
+	}
+}
+
+// Compute absMiss and missCnt for all full lanes
+// Compute blankCnt (# of blank entries in square
+//
+void EnvBase::BuildFull()
+{
+	blankCnt = 0;
+
+	Mask all = Set::BitMask(n) - 1;
+	for (int l = 0; l < n; l++) {
+		RowFull[l]->Init(n, l, true,  all, n);
+		ColFull[l]->Init(n, l, false, all, n);
+	}
+	u8 v;
+	for (int i = 0; i < n; i++) {
+		for (int j = 0; j < n; j++) {
+			v = Mat(i, j);
+			if (v < n) {
+				RowFull[i]->Present(v);
+				ColFull[j]->Present(v);
+			}
+			else
+				blankCnt++;
+		}
+	}
+
+	for (int l = 0; l < n; l++) {
+		RowFull[l]->Check();
+		ColFull[l]->Check();
+	}
+}
+
+bool EnvBase::VerifyLatSq(FastMatrix<FASTMATDIMLOG, u8>& M)
+{
+	Set lane;
+	Mask all = (1LL << n) - 1;
+	bool success = true;
+
+	for (s8 i = 0; i < n; i++) {
+		// Verify Row i
+		lane = 0;
+		for (s8 j = 0; j < n; j++)
+			lane += M[i][j];
+		if (lane != all) {
+			Report(" BAD ROW i ", i);
+			success = false;
+		}
+	}
+		
+	for (s8 j = 0; j < n; j++) {
+		// Verify Col j
+		lane = 0;
+		for (s8 i = 0; i < n; i++) 
+			lane += M[i][j];
+		if (lane != all) {
+			Report(" BAD COL j ", j);
+			success = false;
+		}
+	}
+	return success;
+}
+
+bool EnvBase::DParsSet(int par, int parVal)
+{
+	if (par < 0 || par >= DPARMAX)
+		return false;
+	DPars[par] = parVal;
+	return true;
+}
+
+
+void EnvBase::Dump(ostream& out, int dumpType)
+{
+	switch (dumpType) {
+	case DUMPALL:
+		//Dump(out, false, false);
+		break;
+
+	case DUMPRSLT:
+		DumpMat(out, RMat);
+		break;
+
+	case DUMPMAT:
+		DumpMat(out, Mat);
+		break;
+
+	case DUMPBACK:
+		DumpBack(out);
+		break;
+
+	case DUMPLANES:
+		DumpLane(out);
+		break;
+
+	case DUMPRINGS:
+		//DumpRings(out);
+		break;
+
+	case DUMPPSET:
+		DumpPSet(out);
+		break;
+
+	case DUMPDIST:
+		DumpDist(out);
+		break;
+
+	default:
+		break;
+	}
+}
+
+
+void Histo<LaneFull>::Start()
 {
 	cnt = 0;
 	for (int v = 0; v < n; v++) {
@@ -128,7 +289,7 @@ void Histo<NLane>::Start()
 	}
 }
 
-void Histo<NLane>::Add(Set s, int idx)
+void Histo<LaneFull>::Add(Set s, int idx)
 {
 	Mask m = 1;
 	for (int v = 0; v < n; v++) {
@@ -141,7 +302,7 @@ void Histo<NLane>::Add(Set s, int idx)
 	}
 }
 
-int Histo<NLane>::Scan(int j)
+int Histo<LaneFull>::Scan(int j)
 {
 	int scanCnt = 0;
 	Mask vMask;
@@ -149,7 +310,7 @@ int Histo<NLane>::Scan(int j)
 	for (int v = 0; v < n; v++) {
 		scanCnt += VCnt[v];
 		vMask = Set::BitMask(v);
-		if (Cols[j].absMiss.Contains(vMask)) {
+		if (ColTab[j]->absMiss.Contains(vMask)) {
 			assert(VCnt[v] > 0);
 			if (VCnt[v] <= 1) {
 				// Forced value
@@ -162,11 +323,11 @@ int Histo<NLane>::Scan(int j)
 
 				// Change Mat and SLanes
 				(* pMat)[i][j] = v;
-				Cols[j].absMiss -= vMask;
-				Cols[j].missCnt--;
-				if (Rows[i].absMiss.Contains(vMask)) {
-					Rows[i].absMiss -= vMask;
-					Rows[i].missCnt--;
+				ColTab[j]->absMiss -= vMask;
+				ColTab[j]->missCnt--;
+				if (RowTab[i]->absMiss.Contains(vMask)) {
+					RowTab[i]->absMiss -= vMask;
+					RowTab[i]->missCnt--;
 				}
 			}
 		}
@@ -182,9 +343,10 @@ int Histo<NLane>::Scan(int j)
 	return fixCnt;
 }
 
-int Histo<NLane>::Fill()
+template<class LaneFull> int Histo<LaneFull>::Fill()
 {
-	Report("\n FILL \n");
+	if (DbgSt.reportCreate)
+		Report("\n HISTO FILL \n");
 
 	int fixCnt = 0;
 	for (int j = 0; j < n; j++) {
@@ -192,7 +354,7 @@ int Histo<NLane>::Fill()
 		for (int i = 0; i < n; i++) {
 			if ((*pMat)[i][j] > n) {
 				// Blank entry
-				Add(Rows[i].absMiss & Cols[j].absMiss, i);
+				Add(RowTab[i]->absMiss & ColTab[j]->absMiss, i);
 			}
 		}
 		fixCnt += Scan(j);
@@ -200,26 +362,23 @@ int Histo<NLane>::Fill()
 	return fixCnt;
 }
 
+bool NEnv::ReadRaw(string& fname, string sortMode)
+{
+	InputRaw(fname, sortMode);
+	Init();
+	ProcessMat();
+	return true;
+}
+
 void NEnv::ProcessMat()
 {
-	u8 v;
-	for (int i = 0; i < n; i++) {
-		for (int j = 0; j < n; j++) {
-			v = Mat(i, j);
-			if (v < n) {
-				Rows[i].Present(v);
-				Cols[j].Present(v);
-			}
-		}
-	}
-
+	// Fill Full Indices
 	for (int l = 0; l < n; l++) {
-		Rows[l].Check();
-		Cols[l].Check();
+		RowFull[l] = (LaneFull*)(Rows + l);
+		ColFull[l] = (LaneFull*)(Cols + l);
 	}
 
-	// Copy Mat for future verification
-	MatCpy = Mat;
+	BuildFull();
 }
 
 void NEnv::FillBlanks()
@@ -241,7 +400,7 @@ void NEnv::FillBlanks()
 	for (int j = 0; j < n; j++) {
 		Cols[j].FillBlanks(Rows);
 		blankCnt += Cols[j].blankCnt;
-		ColsPermCnt[j] = Cols[j].PSet.permCnt;
+		ColsPermCnt[j] = Cols[j].PSet.Counts.permCnt;
 	}
 
 	// Fill Rows (cross direction)
@@ -250,7 +409,75 @@ void NEnv::FillBlanks()
 	}
 
 	LinkBlanks();
-	// SearchDistComp();
+}
+
+void NEnv::FillEnts()
+{
+	NEntry* pBlank;
+	// Create BStacks
+	for (int i = 0; i < n; i++) {
+		for (int j = 0; j < n; j++) {
+			if (Mat(i, j) > n) {
+				pBlank = new NEntry(i, j);
+				Rows[i].AddBlank(pBlank);
+				Cols[j].AddBlank(pBlank);
+			}
+		}
+	}
+
+	// Fill Cols (will assume thru direction)
+	blankCnt = 0;
+	for (int j = 0; j < n; j++) {
+		Cols[j].FillBlanks(Rows, false);
+		blankCnt += Cols[j].blankCnt;
+		ColsPermCnt[j] = Cols[j].PSet.Counts.permCnt;
+	}
+
+	// Fill Rows (cross direction)
+	for (int i = 0; i < n; i++) {
+		Rows[i].FillBlanks(Cols, false);
+	}
+
+	LinkBlanks();
+}
+
+void EnvBase::GenPerms(int kind, bool doRow, int idxFrom, int idxTo, bool doCheck)
+{
+	LaneFull* pLane;
+
+	for (int idx = idxFrom; idx < idxTo; idx++) {
+		pLane = (doRow ? RowFull : ColFull)[idx];
+		switch (kind) {
+		case GENREF:
+			pLane->PermRefCreate();
+			break;
+
+		case GENEXP:
+			pLane->GenExpSet();
+			if (doCheck)
+				pLane->CheckExpSet();
+			break;
+
+		case GENLVL:
+			pLane->GenPSet();
+			if (doCheck)
+				pLane->CheckPSet();
+			break;
+
+		case GENALL:
+			pLane->PermRefCreate();
+			pLane->GenExpSet();
+			pLane->GenPSet();
+			if (doCheck) {
+				pLane->CheckExpSet();
+				pLane->CheckPSet();
+			}
+			break;
+
+		default:
+			assert(0);
+		}
+	}
 }
 
 int NEnv::RegenPSets()
@@ -300,8 +527,6 @@ void NEnv::LinkBlanks()
 		Cols[l].ringHd.upThru->thLast = true;
 		Rows[l].ringHd.upCross->crLast = true;
 	}
-
-	pFirst = Cols[0].NStack[0].pEnt;
 }
 
 void NEnv::SearchPublish()
@@ -393,14 +618,14 @@ int NEnv::SearchThru()
 	return solveCnt;
 }
 
-void NEnv::DumpMat(ostream& out)
+void EnvBase::DumpMat(ostream& out, FastMatrix<FASTMATDIMLOG, u8>& DMat)
 {
 	u8 buf[DIMMAX];
 	IO.OutSet(out);
 	IO.OutHeader(n);
 	for (int i = 0; i < n; i++) {
 		for (int j = 0; j < n; j++) {
-			buf[j] = Mat[i][j];
+			buf[j] = DMat[i][j];
 		}
 		IO.OutLineV(buf, i, n);
 	}
@@ -486,12 +711,12 @@ void NEnv::DumpDist(ostream& out)
 // DPars[1]: idx
 // DPars[2]: dump PSet.NodeCnt[]
 //
-bool NEnv::DumpLane(ostream& out)
+void NEnv::DumpLane(ostream& out)
 {
 	NLane* pLane;
 	string kind;
 	if (DPars[1] >= n)
-		return false;
+		return;
 	if (DPars[0]) {
 		pLane = Cols;
 		kind = "COL";
@@ -511,7 +736,6 @@ bool NEnv::DumpLane(ostream& out)
 		out << "PERMS " << kind << setw(3) << DPars[1];
 		pLane[DPars[1]].PSet.Dump(out, DPars[2] != 0);
 	}
-	return true;
 }
 
 // DPars[0]: isCol
@@ -519,61 +743,15 @@ bool NEnv::DumpLane(ostream& out)
 // DPars[2]: lvlFr
 // DPars[3]: lvlTo
 //
-bool NEnv::DumpPSet(ostream& out)
+void NEnv::DumpPSet(ostream& out)
 {
 	NLane* pLane;
 	if (DPars[1] >= n || DPars[1] < 0)
-		return false;
+		return;
 	pLane = DPars[0] ? Cols : Rows;
 	pLane += DPars[1];
 	pLane->PSet.DumpLvls(out, DPars[2], DPars[3]);
-	return true;
 }
-
-bool NEnv::DumpSet(int par, int parVal)
-{
-	if (par < 0 || par >= DPARMAX)
-		return false;
-	DPars[par] = parVal;
-	return true;
-}
-
-void NEnv::Dump(ostream& out, int dumpType)
-{
-	switch (dumpType) {
-	case DUMPALL:
-		//Dump(out, false, false);
-		break;
-
-	case DUMPMAT:
-		DumpMat(out);
-		break;
-
-	case DUMPBACK:
-		DumpBack(out);
-		break;
-
-	case DUMPLANES:
-		DumpLane(out);
-		break;
-
-	case DUMPRINGS:
-		//DumpRings(out);
-		break;
-
-	case DUMPPSET:
-		DumpPSet(out);
-		break;
-
-	case DUMPDIST:
-		DumpDist(out);
-		break;
-
-	default:
-		break;
-	}
-}
-
 bool NEnv::SearchDistThru(int j)
 {
 	NEntry* pEnt;
@@ -719,9 +897,6 @@ int NEnv::SearchD()
 	std::cout << endl << " SEARCH D CNT " << solveCnt << endl;
 	return solveCnt;
 }
-
-#ifdef DBGEXPAND
-#endif
 
 int NEnv::SearchRed()
 {

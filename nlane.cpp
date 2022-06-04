@@ -1,4 +1,5 @@
 #include "nlane.h"
+#include "nenv.h"
 
 void NLane::Init(int _n, int _idx, bool _isRow)
 {
@@ -18,8 +19,9 @@ void NLane::Init(int _n, int _idx, bool _isRow)
 	isRow = _isRow;
 }
 
-void NLane::Present(u8 v) {
-	if (v >= n)
+void LaneFull::Present(u8 v)
+{
+	if (v == BLKENT)
 		return;
 	presCnt++;
 	present |= Set::BitMask(v);
@@ -28,14 +30,16 @@ void NLane::Present(u8 v) {
 	absMiss &= ~Set::BitMask(v);
 }
 
-void NLane::Missing(u8 v) {
-	if (v < n)
+void LaneFull::Missing(u8 v)
+{
+	if (v == BLKENT)
 		return;
 	missCnt++;
 	absMiss &= ~(Set::BitMask(v));
 }
 
-bool NLane::Check() {
+bool LaneFull::Check()
+{
 	if (presCnt + missCnt != n)
 		return false;
 	if ((present | absMiss) != all)
@@ -55,8 +59,9 @@ void NLane::AddBlank(NEntry* pEnt)
 //			pBlank->pThru and pCross
 //			pBlank->miss		with intersection thru and cross missing sets
 //		Fill in NStack
+//		Create ExpSet and PSet
 //
-void NLane::FillBlanks(NLane* CrossLanes)
+void NLane::FillBlanks(NLane* CrossLanes, bool doPerms)
 {
 	NLane* pCross;
 
@@ -82,33 +87,115 @@ void NLane::FillBlanks(NLane* CrossLanes)
 		NStack[level].lMiss = MapToLocal(pBlank->missV, pBlank->missCnt);
 	}
 
+	if (doPerms) {
+		// Generate ExpSet and PSet
+		GenExpSet();
+		GenPSet();
 
-	// Generate PSet
-	u16 cnt;
+		if (EPars.makeRef) {
+			// Create Ref file and verify against it
+			PermRefCreate();
+		}
+
+		if (EPars.checkRef) {
+			CheckExpSet();
+			CheckPSet();
+		}
+	}
+}
+
+int LaneFull::GenPSet()
+{
 	PSet.Init(blankCnt, 1, true);
 	PSet.VDictSet(absMiss);
-	PSet.ExpAlloc();
-	PermSetGenExpanded(0, 0, cnt);
-	PSet.ExpVerifyCounts();
-	if (PSet.badCounts)
-		assert(0);
-	PSet.LvlFromExp(lMissing);
-	PSet.SetId (isRow, idx);
-
-	PSet.LvlSetMiss(this);
-
-//#define REFCREATE
-#ifdef REFCREATE
-	PermRefCreate();
-	string failedExp = "FAILED EXP vs REF";
-	if (!PSet.ExpCheckRef(pRef)) {
-		Report(failedExp, pRef->fname, pRef->errCnt);
-	}
-	string failedLvl = "FAILED LVLPSET vs REF";
-	if (!PSet.LvlCheckRef(pRef)) {
-		Report(failedLvl, pRef->fname, pRef->errCnt);
-	}
+	PSet.LvlFromExp(pExpSet, lMissing);
+	PSet.SetId(isRow, idx);
+#ifdef RESTRICT
+	int chgCnt = PSetRestrictMiss();
+	return chgCnt;
 #endif
+	return 0;
+}
+
+bool LaneFull::CheckExpSet()
+{
+	string msg = "FAILED EXP vs REF";
+	if (!pExpSet->CheckRef(pRef)) {
+		Report(msg, pRef->fname, pRef->errCnt);
+		return false;
+	}
+	return true;
+}
+
+bool LaneFull::CheckPSet()
+{
+	string msg = "FAILED LVLPSET vs REF";
+	if (!PSet.LvlCheckRef(pRef)) {
+		Report(msg, pRef->fname, pRef->errCnt);
+		return false;
+	}
+	return true;
+}
+
+
+// Add an entry to NStack
+//	 Sets pPrev to NStack[blankCnt].pEnt
+//   Returns stack level
+//
+s8 LaneFull::AddEnt(EntryBase* pEnt, u8 EntDict[], EntryBase*& pPrev)
+{
+	pPrev = (blankCnt == 0) ? nullptr : (EntryBase*)(NStack[blankCnt - 1].pEnt);
+
+	NStack[blankCnt].pEnt = (NEntry *) pEnt;		///// FIX type
+	NStack[blankCnt].lMiss = MapToLocal(EntDict, pEnt->missCnt);
+	
+	return blankCnt++;
+}
+
+bool LaneFull::PermsGenAndCheck()
+{
+	if (EPars.makeRef)
+		PermRefCreate();
+
+	if (GenExpSet() == PermSet::LONGLNKNULL) {
+		PSet.SetEmpty();
+		return false;
+	}
+
+	bool checkSuccess = true;
+	if (EPars.checkRef)
+		checkSuccess = CheckExpSet();
+
+	GenPSet();
+	if (EPars.checkRef)
+		checkSuccess = checkSuccess && CheckPSet();
+
+	return checkSuccess;
+}
+
+LongLink LaneFull::GenExpSet()
+{
+	if (missCnt <= 0) {
+		// Empty lane
+		pExpSet = nullptr;
+		return PermSet::LONGLNKNULL;
+	}
+
+	LMask MissTab[BLANKCNTMAX];
+	for (int d = 0; d < missCnt; d++) {
+		MissTab[d] = NStack[d].lMiss;
+	}
+	pExpSet = new PermExp();
+	pExpSet->Alloc();
+	pExpSet->GenInit(lMissing, MissTab, missCnt);
+
+	ShortCnt cnt;
+	pExpSet->baseLnk = pExpSet->Gen(0, 0, cnt);
+	pExpSet->VDictSet(absMiss);
+	if (!pExpSet->VerifyCounts())
+		assert(0);
+	return pExpSet->baseLnk;
+
 }
 
 // Insert blanks into corresponding row ring
@@ -140,7 +227,8 @@ void NLane::LinkCross(NLane* Cols)
 
 int NLane::RegenPSet()
 {
-	PSet.ExpDealloc();
+	pExpSet->Dealloc();
+	delete pExpSet;
 	PSet.LvlDealloc();
 
 	for (level = 0; level < blankCnt; level++) {
@@ -148,20 +236,27 @@ int NLane::RegenPSet()
 		NStack[level].lMiss = MapToLocal(pBlank->missV, pBlank->missCnt);
 	}
 
-	// Generate PSet
-	u16 cnt;
-	PSet.Init(blankCnt, 1, true);
-	PSet.VDictSet(absMiss);
-	PSet.ExpAlloc();
-	PermSetGenExpanded(0, 0, cnt);
-	PSet.ExpVerifyCounts();
-	if (PSet.badCounts)
-		assert(0);
-	PSet.LvlFromExp(lMissing);
-	PSet.SetId(isRow, idx);
+	// Generate ExpSet and PSet
+	if (EPars.makeRef) {
+		// Create Ref file and verify against it
+		PermRefCreate();
+	}
 
-	return PSet.LvlSetMiss(this);
+	GenExpSet();
+	if (EPars.checkRef)
+		CheckExpSet();
+
+	int chg = GenPSet();
+	if (EPars.checkRef)
+		CheckPSet();
+	return chg;
 }
+
+////////////////////////////////////////////////////////////////////////////
+//
+//	SEARCHES
+// 
+////////////////////////////////////////////////////////////////////////////
 
 void NLane::NextPermInit()
 {
@@ -530,14 +625,14 @@ bool NLane::NextPermRedDnCol()
 	return false;
 }
 
-void NLane::AbsToLocal()
+void LaneFull::AbsToLocal()
 {
 	Set abs = absMiss;
 	abs.ExtractValues(VDict, BLANKCNTMAX);
 	lMissing = (1 << missCnt) - 1;
 }
 
-LMask NLane::MapToLocal(Set abs)
+LMask LaneFull::MapToLocal(Set abs)
 {
 	LMask m = 0;
 
@@ -557,7 +652,7 @@ LMask NLane::MapToLocal(Set abs)
 	return m;
 }
 
-LMask NLane::MapToLocal(u8* pV, int cnt)
+LMask LaneFull::MapToLocal(u8* pV, int cnt)
 {
 	LMask m = 0;
 
@@ -577,110 +672,111 @@ LMask NLane::MapToLocal(u8* pV, int cnt)
 	return m;
 }
 
-// Returns lnk to node and node cnt
-//	Input: lane lMissing and stack[level].lMiss
-//
-LongLink NLane::PermSetGenExpanded(int level, LMask sel, ShortCnt& cnt)
+void LaneFull::RemoveV(u8 v)
 {
-	LongLink branch;
-
-	LMask chosenBit;
-	LMask unsel = lMissing & (~sel);
-	LMask choice = NStack[level].lMiss & unsel;
-	LMask nextSel;
-
-	if (choice == 0)
-		// Exhausted branch
-		return PermSet::LONGLNKNULL;
-
-	if (level == missCnt - 1) {
-		// At Bottom
-		assert(choice == (choice & (~choice + 1)));
-		// Returns mask
-		cnt = 1;
-		PSet.CountTerm();
-		return choice;
-	}
-
-	// Internal branch: iterate through all descendants
-	ShortLink nodeCnt = 0;
-	LongLink* pTemp = PSet.NodeExpStart(level);
-	ShortCnt vMask = 0;
-	ShortCnt branchCnt;
-
-	do {
-		// Extract candidate from choiceSet
-		chosenBit = choice & (~choice + 1);
-		choice &= ~chosenBit;
-		nextSel = sel | chosenBit;
-
-		if ((branch = PermSetGenExpanded(level + 1, nextSel, branchCnt)) == PermSet::LONGLNKNULL)
-			// Branch is not viable
-			continue;
-
-		if (level >= missCnt - 2) {
-			// Bottom branch: 
-			pTemp = PSet.NodeExpBotBranch(pTemp, branch);
-		}
-		else {
-			// Intermediate level - tree zone
-			pTemp = PSet.NodeExpBranch(pTemp, branchCnt, branch);
-		}
-		nodeCnt += branchCnt;
-		vMask |= chosenBit;
-	} while (choice != 0);
-
-	// Create tree node and return
-	if (nodeCnt > 0) {
-		cnt = nodeCnt;
-		return PSet.NodeExpEnd(level, pTemp, nodeCnt, vMask);
-	}
-	else
-		return PermSet::LONGLNKNULL;
+	assert(absMiss.Contains(v));
+	absMiss -= v;
+	missCnt--;
+	AbsToLocal();
 }
 
-int NLane::PermRefCreate()
+int LaneFull::PermRefCreate()
 {
-	pRef = new PermSetRef(isRow, idx, missCnt);
+	Set MissTab[BLANKCNTMAX];
+
+	for (int d = 0; d < missCnt; d++) {
+		MissTab[d] = NStack[d].pEnt->miss.mask;
+	}
+
+	pRef = new PermSetRef(isRow, idx, missCnt, absMiss, MissTab);
 	pRef->Create();
-	PermRefGen(0, 0, refCnt);
+	pRef->Gen(0, 0, refCnt);
 	refCnt = pRef->Close();
 	return refCnt;
 }
 
-bool NLane::PermRefGen(int level, Mask sel, ShortCnt& cnt)
+int NLane::PSetRestrictMiss()
 {
-	Mask chosenBit;
-	Mask unsel = absMiss & (~sel);
-	Mask choice = NStack[level].pEnt->miss.mask & unsel;
+	int MissDel[BLANKCNTMAX];
 
-	if (choice == 0)
-		// Exhausted branch
-		return false;
-
-	Mask nextSel;
-	ShortCnt brCnt;
-	bool notEmpty = false;
-	do {
-		// Extract level value from choiceSet
-		chosenBit = choice & (~choice + 1);
-		pRef->V[level] = Set::GetIdx(chosenBit);
-		choice &= ~chosenBit;
-		if (level == missCnt - 1) {
-			// At Bottom
-			assert(choice == 0);
-			pRef->Out();
-			return true;
+	PSet.pChkRef = 0;
+	for (int d = 0; d < PSet.depth; d++) {
+		PSet.VisitMiss[d] = 0;
+	}
+	PSet.LvlVisit(0, PSet.BranchPtr(0, (ShortLink)0));
+	NEntry* pEnt;
+	int chgCnt = 0;
+	for (int d = 0; d < blankCnt; d++) {
+		pEnt = NStack[d].pEnt;
+		assert(pEnt->miss >= PSet.VisitMiss[d]);
+		int mCnt = pEnt->miss.Count();
+		int vCnt = PSet.VisitMiss[d].Count();
+		MissDel[d] = mCnt - vCnt;
+		if (MissDel[d] > 0) {
+			Report(
+				isRow ? "  ROW CHG idx/d/cnt " : "  COL CHG idx/d/cnt ",
+				idx, d, vCnt);
 		}
-
-		nextSel = sel | chosenBit;
-		if (! PermRefGen(level + 1, nextSel, brCnt)) {
-			// Branch is not viable
-			continue;
+		if (vCnt == 1) {
+			Report(
+				isRow ? "  ROW UNIQUE idx/d/i/j " : "  COL UNIQUE idx/d/i/j ",
+				idx, d, pEnt->i, pEnt->j);
 		}
-		cnt += brCnt;
-		notEmpty = true;
-	} while (choice != 0);
+		chgCnt += MissDel[d];
+		// Restrict entry miss
+		pEnt->miss = PSet.VisitMiss[d];
+		pEnt->missCnt =
+			pEnt->miss.ExtractValues(pEnt->missV, sizeof(pEnt->missV));
 
-	return notEmpty;
+		NStack[d].lMiss =
+			MapToLocal(pEnt->missV, pEnt->missCnt);
+	}
+
+	return chgCnt;
 }
+
+int LaneFull::PSetRestrictMiss()
+{
+	int MissDel[BLANKCNTMAX];
+
+	PSet.pChkRef = 0;
+	for (int d = 0; d < PSet.depth; d++) {
+		PSet.VisitMiss[d] = 0;
+	}
+	PSet.LvlVisit(0, PSet.BranchPtr(0, (ShortLink)0));
+	EntryBase* pEnt;
+	u8 VAux[BLANKCNTMAX];
+	int chgCnt = 0;
+	for (int d = 0; d < blankCnt; d++) {
+		pEnt = NStack[d].pEnt;
+		if (!(pEnt->miss >= PSet.VisitMiss[d])) {
+			Report(isRow ? "  ROW PSET OFLO idx/d " : "  COL PSET OFLO idx/d ", idx, d);
+		}
+		else {
+			int mCnt = pEnt->miss.Count();
+			int vCnt = PSet.VisitMiss[d].Count();
+			MissDel[d] = mCnt - vCnt;
+			if (MissDel[d] > 0) {
+				Report(
+					isRow ? "  ROW CHG idx/d/cnt " : "  COL CHG idx/d/cnt ",
+					idx, d, vCnt);
+			}
+			if (vCnt == 1) {
+				Report(
+					isRow ? "  ROW UNIQUE idx/d/i/j " : "  COL UNIQUE idx/d/i/j ",
+					idx, d, pEnt->i, pEnt->j);
+			}
+			chgCnt += MissDel[d];
+			// Restrict entry miss
+			pEnt->miss = PSet.VisitMiss[d];
+		}
+		pEnt->missCnt =
+			pEnt->miss.ExtractValues(VAux, sizeof(VAux));
+
+		NStack[d].lMiss =
+			MapToLocal(VAux, pEnt->missCnt);
+	}
+
+	return chgCnt;
+}
+
