@@ -98,6 +98,10 @@ public:
 			Dump(*pStr, dumpType);
 	}
 
+	void ReportDec() {
+		for (ostream* pStr = StrFirst(); pStr != 0; pStr = StrNext())
+			*pStr << dec;
+	}
 	void Report(string& msg) {
 		for (ostream* pStr = StrFirst(); pStr != 0; pStr = StrNext())
 			*pStr << msg;

@@ -70,7 +70,7 @@ bool Consola::processCmd()
 		ProcessEnvPar(Tokens[1], Tokens[2]);
 	}
 	else if (Tokens[0] == "sort") {
-		ProcessSort(Tokens[1], Tokens[2]);
+		ProcessSort(Tokens[1], Tokens[2], Tokens[3], Tokens[4]);
 	}
 	else if (Tokens[0] == "link") {
 		ProcessLink(Tokens[1]);
@@ -168,9 +168,21 @@ bool Consola::ProcessRead(string& id, string& fname, string& dim, string& t)
 			return true;
 		}
 	}
-	else {
-		return true;
+	else if (t == "grow") {
+		// GEnv
+		GEnv* pG = new GEnv(n);
+		if (!pG->ReadSrc(fname)) {
+			cerr << "Cannot load " << datadir + fname << endl;
+			return false;
+		}
+		else {
+			SymTab.Add(id, SymType(SymType::TYPGENV), pG, 0);
+			pG->SortNone();
+			return true;
+		}
 	}
+
+	return false;
 }
 
 bool Consola::ProcessReadRaw(string& id, string& fname, string& kind, string& sortMode)
@@ -405,8 +417,17 @@ bool Consola::ProcessRegen(string& id)
 	return false;
 }
 
-bool Consola::ProcessSort(string& id, string& par)
+bool Consola::ProcessSort(string& id, string& srcId, string& rowOrder, string& colOrder)
 {
+	GEnv* pG = new GEnv();
+	Symbol* pSym = SymTab.Find(srcId);
+	if (pSym == 0)
+		return false;
+
+	GEnv* pSrc = (GEnv*)pSym->pObj;
+	pG->CopyFrom(*pSrc, rowOrder, colOrder);
+
+	SymTab.Add(id, SymType(SymType::TYPGENV), pG, 0);
 	return true;
 }
 
@@ -443,6 +464,12 @@ bool Consola::ProcessDebug(string& par0, string& par1, string& par2)
 	}
 	else if (par0 == "searchlim") {
 		DbgSt.searchLim = cnt;
+	}
+	else if (par0 == "dumpres") {
+		DbgSt.dumpResult = cnt;
+	}
+	else if (par0 == "reportcreate") {
+		DbgSt.reportCreate = true;
 	}
 	else
 		cerr << " DEBUG bad param " << par0 << endl;

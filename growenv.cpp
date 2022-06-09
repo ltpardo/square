@@ -2,9 +2,6 @@
 #include "growenv.h"
 #include "matvis.h"
 
-RangeTrack RngTrack;
-
-SolveStkEnt StkPool[STKSIZE];
 
 int GEnv::Search()
 {
@@ -158,17 +155,31 @@ void GEnv::SearchDump()
 {
     RMat = Mat;
 
+    // Replace selected values
     GEntry* pEnt = pEntries;
-    u32 hash = 0;
-    const int hashMask = 0xF;
     for (int e = 0; e < blankCnt; e++, pEnt++) {
         RMat[pEnt->i][pEnt->j] = pEnt->selV;
-        hash ^= (((u32)pEnt->selV) << (e & hashMask));
+    }
+
+    // Unshuffle result matrix as needed
+    if (rowsSorted)
+        ShuffleMats(RMat, true, RowUnsort);
+    if (colsSorted)
+        ShuffleMats(RMat, false, ColUnsort);
+
+    // Generate reult hash
+    u32 hash = 0;
+    const int hashMask = 0xF;
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++) {
+            hash ^= (((u32)RMat[i][j]) << ((i + j) % 24));
+        }
     }
 
     if (!VerifyLatSq(RMat))
         Report(" BAD RESULT");
 
+    ReportDec();
     Report(" RESULT # ", srCnt, hash);
     RngTrack.StepsDump();
     if (DbgSt.DmpResult())
@@ -179,6 +190,17 @@ void GEnv::Init() {
     gLevelMax = GEnvGeom::GLevelMax(n);
     pVMap = new MatVis(n);
     NHisto.Init(n, RowFull, ColFull, &Mat);
+}
+
+// Inputs array (source encoded) from fname
+// Inits and ProcessMat
+bool GEnv::ReadSrc(string& fname)
+{
+    if (!Read(fname))
+        return false;
+    Init();
+    ProcessMat();
+    return true;
 }
 
 // Inputs array from fname
@@ -192,6 +214,19 @@ bool GEnv::ReadRaw(string& fname, string sortMode)
     ProcessMat();
     return true;
 }
+
+// Copy Mat from Src
+// Sort according to sortRow and sortCol
+// Init and ProcessMat
+//
+bool GEnv::CopyFrom(EnvBase& Src, string& sortRow, string& sortCol)
+{
+    CopyRaw(Src, sortRow, sortCol);
+    Init();
+    ProcessMat();
+    return true;
+}
+
 
 // Random generates array (nxn, blkCnt blanks per lane, using seed)
 // ProcessMat
@@ -270,7 +305,7 @@ bool GEnv::LinkGLanes()
 //	Fills gEntries in pLanes[lvl]: 
 //      coords, miss*, *Lvl, ent*
 //      gIdx, upEdge
-//      pPSet*
+//      pLanePSet and pEdgePSet
 //      Allocates Stk
 //	Fills pLanes[lvl]: 
 //		gLevel, idx, isRow
@@ -278,7 +313,7 @@ bool GEnv::LinkGLanes()
 //  Fills full lanes NStack
 //  Discards unique valued entries and returns discarded count
 //
-int GEnv::ScanMat(s8 lvl)
+int GEnv::ScanMat(s8 lvl, SolveStkEnt* pStkPool)
 {
     GLane* pLane = pLanes + lvl;
     pLane->gLevel = lvl;
@@ -333,7 +368,7 @@ int GEnv::ScanMat(s8 lvl)
                     }
 
                     // Fill in Stk for pEnt
-                    pEnt->Stk.Set(stackBase, BLANKCNTMAX);
+                    pEnt->Stk.Set(pStkPool, stackBase, BLANKCNTMAX);
                     stackBase += BLANKCNTMAX;
                     assert(stackBase <= STKSIZE);
 
@@ -419,7 +454,7 @@ void GEnv::CompleteLinks(s8 lvl)
         pLane->pEntAfter = nullptr;
 }
 
-// Creates pEntries, pLanes
+// Creates pEntries, pLanes, StkPool
 //   ScanMat for all lanes
 //   CompleteLinks for all lanes
 //   LinkGLanes
@@ -433,14 +468,17 @@ void GEnv::FillEnts()
     // Create srLevelMax gLanes
     pLanes = new GLane[gLevelMax + 1];
 
-    // Init StkPool allocation
-    stackBase = 0;
+    // Create Stack pool
+    StkPool = new  SolveStkEnt[STKSIZE];
 
     // Fill lanes and NStacks in LaneFull
-    int discCnt;
+    int discardCnt;
     do {
-        discCnt = 0;
+        // Init StkPool allocation
+        stackBase = 0;
         freeEnt = 0;
+
+        discardCnt = 0;
         // Blank Stacks
         for (int l = 0; l < n; l++) {
             RowFull[l]->BlankStk();
@@ -448,12 +486,12 @@ void GEnv::FillEnts()
         }
 
         for (srLevel = 0; srLevel <= gLevelMax; srLevel++) {
-            discCnt += ScanMat(srLevel);
+            discardCnt += ScanMat(srLevel, StkPool);
         }
         assert(freeEnt == blankCnt);
         if (DbgSt.reportCreate)
-            Report("Discarded count ", discCnt);
-    } while (discCnt > 0);
+            Report("Discarded count ", discardCnt);
+    } while (discardCnt > 0);
 
     // Fill entry links
     for (srLevel = 0; srLevel <= gLevelMax; srLevel++) {
@@ -479,6 +517,7 @@ void GEnv::FillBlanks()
 //	Generate ExpSets and PSets
 //      EPars.makeRef ->    create PermRef
 //      EPars.checkRef->    check against PermRef
+//      Collect RowsPermCnt[] and ColsPermCnt[]
 //
 void GEnv::GenPermSets()
 {
@@ -491,10 +530,10 @@ void GEnv::GenPermSets()
         ColFull[l]->PermsGenAndCheck();
         if (DbgSt.reportCreate)
             Report("GEN COL j/permCnt ", l, ColFull[l]->PSet.Counts.permCnt);
-        ColsPermCnt[l] = RowFull[l]->PSet.Counts.permCnt;
-    }
 
-    //LinkBlanks();
+        RowsPermCnt[l] = RowFull[l]->PSet.Counts.permCnt;
+        ColsPermCnt[l] = ColFull[l]->PSet.Counts.permCnt;
+    }
 }
 
 // Display changeLinks
@@ -534,7 +573,7 @@ void GEnv::DisplayChangeLinks()
         pVMap->SetEnt(pEnt->i, pEnt->j);
     }
 
-    pVMap->Out(cout);
+    pVMap->Out();
 }
 
 

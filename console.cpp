@@ -197,11 +197,12 @@ bool Consola::getCmd()
 
 	outPrompt();
 	getCmdLine();
-	showLine();
-	logLine();
 	if (tokenCnt <= 0)
 		// Empty line
 		return true;
+
+	showLine();
+	logLine();
 
 	// Process structure commands first
 	if (processDepth())

@@ -7,21 +7,22 @@
 #include "matvis.h"
 
 enum { STKSIZE = DIMMAX * BLANKCNTMAX * BLANKCNTMAX };
-extern SolveStkEnt StkPool[STKSIZE];
 
 class GStk {
 public:
 	GStk() : base(0), size(0), free(0) {}
 
+	SolveStkEnt* pBase;
 	u16 base;
-	void Set(s16 _base, u8 _size) {
+	u8 size;
+	u8 free;
+
+	void Set(SolveStkEnt* pStkPool, s16 _base, u8 _size) {
+		pBase = pStkPool + _base;
 		base = _base;
 		size = _size;
 		Reset();
 	}
-
-	u8 size;
-	u8 free;
 
 	void Reset() {
 		free = 0;
@@ -31,15 +32,15 @@ public:
 
 	void Push(LvlBranch thBr, LvlBranch crBr) {
 		assert(free < size);
-		StkPool[base + free].Set(thBr, crBr);
+		pBase[free].Set(thBr, crBr);
 		free++;
 	}
 
 	bool Pull(LvlBranch& thBr, LvlBranch& crBr) {
 		assert(free > 0);
 		free--;
-		thBr = StkPool[base + free].thBr;
-		crBr = StkPool[base + free].crBr;
+		thBr = pBase[free].thBr;
+		crBr = pBase[free].crBr;
 		return ! IsEmpty();
 	}
 };
@@ -229,13 +230,20 @@ public:
 
 	GLane* pLanes;
 	GEntry* pEntries;
+	SolveStkEnt* StkPool;
 	int freeEnt;
 	s16 stackBase;
+
+	RangeTrack RngTrack;
 
 	//////////////////////////////////////////////////////////
 	// 
 	// Building
 	
+	// Inputs array (source encoded) from fname
+	// Inits and ProcessMat
+	bool ReadSrc(string& fname);
+
 	// Inputs array from fname
 	// Sorts array columns 
 	// ProcessMat
@@ -249,6 +257,11 @@ public:
 	// Fills VDict in *Full lanes
 	void ProcessMat();
 
+	// Copy Mat from Src
+	// Sort according to sortRow and sortCol
+	// Init and ProcessMat
+	bool CopyFrom(EnvBase& Src, string& sortRow, string& sortCol);
+
 	// Scan Mat at lvl
 	//	Fills gEntries in pLanes[lvl]: 
 	//      coords, miss*, *Lvl, ent*
@@ -260,7 +273,7 @@ public:
 	//		entFirst, entLast, entCnt, pEntFirst
 	//  Fills full lanes NStack
 	//  Discards unique valued entries and returns discarded count
-	int ScanMat(s8 lvl);
+	int ScanMat(s8 lvl, SolveStkEnt *pStkPool);
 
 	// Compute dnEdge, pDnEdge and changeIdx indices for all entries
 	//  Set pEntAfter for gLane
@@ -273,6 +286,7 @@ public:
 	//	Generate ExpSets and PSets
 	//      EPars.makeRef ->    create PermRef
 	//      EPars.checkRef->    check against PermRef
+	//      Collect RowsPermCnt[] and ColsPermCnt[]
 	void GenPermSets();
 
 	// Search boundaries

@@ -8,8 +8,8 @@ void PermSet::Init(int _depth, int _termHt, bool countOnly)
 	termHt = _termHt;
 	depthTerm = depth - termHt;
 
+	Counts.Init(_depth);
 	Counts.InitLevels();
-	Counts.InitTotals(_depth);
 
 	pExpSet = 0;
 }
@@ -299,8 +299,8 @@ void PermSet::LvlFromExp(PermExp *_pExpSet, u16 permMask)
 	pExpSet = _pExpSet;
 	minLvlForSingles = depth - SINGLESZ4;
 	LvlAlloc();
+	Counts.Init(depth);
 	Counts.InitLevels();
-	Counts.InitTotals(depth);
 
 	LvlBranch base = LvlExpVisit(0, pExpSet->baseLnk, permMask);
 
@@ -403,12 +403,14 @@ int PermSet::LvlIntersect(LvlBranch* pT, LvlBranch* pC, Set& ThSet)
 				CrBranches[iCnt++] = brC;
 
 				if (LvlIsLast(brC)) {
+#ifdef THSETFILL
 					// Complete ThSet
 					while (!LvlIsLast(brT)) {
 						brT = *pT++;
 						vT = LvlGetV(brT);
 						//ThSet += vT;
 					}
+#endif
 					break;
 				}
 				if (LvlIsLast(brT))
@@ -429,12 +431,14 @@ int PermSet::LvlIntersect(LvlBranch* pT, LvlBranch* pC, Set& ThSet)
 		}
 		else {
 			if (LvlIsLast(brC)) {
+#ifdef THSETFILL
 				// Complete ThSet
 				while (!LvlIsLast(brT)) {
 					brT = *pT++;
 					vT = LvlGetV(brT);
 					//ThSet += vT;
 				}
+#endif
 				break;
 			}
 			brC = *pC++;
@@ -572,7 +576,7 @@ void  PermCounts::InitLevels()
 	}
 }
 
-void  PermCounts::InitTotals(int _depth)
+void  PermCounts::Init(int _depth)
 {
 	depth = _depth;
 	depthTerm = depth;

@@ -531,7 +531,7 @@ public:
 	PermCounts() {}
 
 	void SetEmpty() {
-		InitTotals(0);
+		Init(0);
 	}
 
 	int permCnt;
@@ -544,8 +544,8 @@ public:
 	int LvlMax[BLANKCNTMAX];
 	int NodeCnt[BLANKCNTMAX];
 	int SingleCnt[BLANKCNTMAX];
+	void Init(int _depth);
 	void InitLevels();
-	void InitTotals(int _depth);
 
 	bool badCounts;
 	bool CheckCounts();

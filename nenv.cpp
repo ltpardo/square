@@ -47,7 +47,30 @@ void EnvBase::OutLineRaw(ostream& out, u8* pLine, int i, int cnt)
 	out << endl;
 }
 
-bool EnvBase::InputRaw(string& fname, string sortMode)
+void EnvBase::SortMat(string& sortRows, string& sortCols)
+{
+	if (colsSorted = (sortCols=="up" || sortCols=="down"))
+		SortRaw(false, ColsPermCnt, ColUnsort, sortCols == "up");
+
+	if (rowsSorted = (sortRows == "up" || sortRows == "down"))
+		SortRaw(true, RowsPermCnt, RowUnsort, sortRows == "up");
+}
+
+bool EnvBase::CopyRaw(EnvBase& Src, string& sortRows, string& sortCols)
+{
+	n = Src.n;
+	Mat = Src.Mat;
+
+	for (int l = 0; l < n; l++) {
+		ColsPermCnt[l] = Src.ColsPermCnt[l];
+		RowsPermCnt[l] = Src.RowsPermCnt[l];
+	}
+
+	SortMat(sortRows, sortCols);
+	return true;
+}
+
+bool EnvBase::InputRaw(string& fname, string sortCols)
 {
 	ifstream in(fname);
 	if (!in.is_open())
@@ -63,12 +86,8 @@ bool EnvBase::InputRaw(string& fname, string sortMode)
 
 	in.close();
 
-	if (sortMode == "up") {
-		SortRaw(true);
-	}
-	else if (sortMode == "down") {
-		SortRaw(false);
-	}
+	string noSort("");
+	SortMat(noSort, sortCols);
 
 	return true;
 }
@@ -80,6 +99,7 @@ void EnvBase::RandGenRaw(int n, int blkCnt, int seed)
 	LSGen.Gen(n);
 	LSGen.Blank(blkCnt);
 	ImportRaw(LSGen.blk);
+	SortNone();
 }
 
 void EnvBase::ImportRaw(u8 Src[FASTMATDIM][FASTMATDIM])
@@ -92,24 +112,55 @@ void EnvBase::ImportRaw(u8 Src[FASTMATDIM][FASTMATDIM])
 bool SortCompUp(u32 a, u32 b) { return a <= b; }
 bool SortCompDn(u32 a, u32 b) { return a >= b; }
 
-bool EnvBase::SortRaw(bool ascending)
+bool EnvBase::ShuffleMats(FastMatrix<FASTMATDIMLOG, u8>& M, bool shuffleRows, s8 shufTab[])
+{
+	FastMatrix<FASTMATDIMLOG, u8> MatAux;
+	MatAux = M;
+
+	// Recopy lanes in sort order
+	if (shuffleRows) {
+		for (int i = 0; i < n; i++) {
+			int iSrc = shufTab[i];
+			for (int j = 0; j < n; j++)
+				M[i][j] = MatAux[iSrc][j];
+		}
+	}
+	else {
+		for (int j = 0; j < n; j++) {
+			int jSrc = shufTab[j];
+			for (int i = 0; i < n; i++)
+				M[i][j] = MatAux[i][jSrc];
+		}
+	}
+
+	return true;
+}
+
+bool EnvBase::SortRaw(bool sortRows, int srcCnt[], s8 unsort[], bool ascending)
 {
 	u32 SortTab[DIMMAX];
+	s8 shufTab[DIMMAX];
 	FastMatrix<FASTMATDIMLOG, u8> MatAux;
 	MatAux = Mat;
 
-	for (int j = 0; j < n; j++)
-		SortTab[j] = (ColsPermCnt[j] << 8) | j;
+	// Create sorting keys
+	for (int l = 0; l < n; l++)
+		SortTab[l] = (srcCnt[l] << 8) | l;
 
+	// Sort keys
 	if (ascending)
 		std::sort(SortTab, SortTab + n, SortCompUp);
 	else
 		std::sort(SortTab, SortTab + n, SortCompDn);
 
-	for (int j = 0; j < n; j++) {
-		int jSrc = SortTab[j] & 0xFF;
-		for (int i = 0; i < n; i++)
-			Mat[i][j] = MatAux[i][jSrc];
+	for (int l = 0; l < n; l++)
+		shufTab[l] = SortTab[l] & 0xFF;
+
+	// Shuffle lanes
+	ShuffleMats(Mat, sortRows, shufTab);
+
+	for (int l = 0; l < n; l++) {
+		unsort[shufTab[l]] = l;
 	}
 
 	return true;
@@ -628,6 +679,34 @@ void EnvBase::DumpMat(ostream& out, FastMatrix<FASTMATDIMLOG, u8>& DMat)
 			buf[j] = DMat[i][j];
 		}
 		IO.OutLineV(buf, i, n);
+	}
+}
+
+// DPars[0]: isCol
+// DPars[1]: idx
+//		if (DPars[1] < 0) Print full set from 0 to n
+// DPars[2]: lvlFr
+// DPars[3]: lvlTo
+//
+void EnvBase::DumpPSet(ostream& out)
+{
+	LaneFull* pLane;
+	if (DPars[1] >= n)
+		return;
+
+	int l0, l1;
+	if (DPars[1] < 0) {
+		l0 = 0;
+		l1 = n - 1;
+	}
+	else {
+		l0 = DPars[1];
+		l1 = DPars[1];
+	}
+
+	for (int l = l0; l <= l1; l++) {
+		pLane = DPars[0] ? ColFull[l] : RowFull[l];
+		pLane->PSet.DumpLvls(out, DPars[2], DPars[3]);
 	}
 }
 

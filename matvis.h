@@ -1,7 +1,7 @@
 #pragma once
 #include "stdinc.h"
 
-class MatVis {
+class MatVis : public LogClient {
 public:
 	MatVis(int _n) {
 		n = _n;
@@ -85,11 +85,16 @@ public:
 		*Canvas.Address(HEntCtr(j), VEntCtr(i)) = cEnt;
 	}
 
-	void Out(ostream& out) {
-		for (int v = 0; v < vSz; v++){
+	void Out(ostream* pOut = nullptr) {
+		for (int v = 0; v < vSz; v++) {
+			string line = "";
 			for (int h = 0; h < hSz; h++) 
-				out << Canvas(h, v);
-			out << endl;
+				line += Canvas(h, v);
+			line += '\n';
+			if (pOut == nullptr) {
+				Report(line.c_str());
+			} else
+				*pOut << line << endl;
 		}
 	}
 
@@ -129,6 +134,6 @@ public:
 		ArrowUp(11, 0, 11);
 
 
-		Out(cout);
+		Out(&cout);
 	}
 };

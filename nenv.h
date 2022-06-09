@@ -52,24 +52,47 @@ class EnvBase : public LogClient {
 public:
 	EnvBase() {}
 
-	InOut<u8> IO;
-
 	int n;
 	FastMatrix<FASTMATDIMLOG, u8> Mat;
 	int blankCnt;			// Total blank Count
+
+	enum { DPARMAX = 8 };
+	int DPars[DPARMAX];
+	bool DParsSet(int par, int parVal);
+
+	InOut<u8> IO;
 
 	// Result Mat
 	FastMatrix<FASTMATDIMLOG, u8> RMat;
 	bool VerifyLatSq(FastMatrix<FASTMATDIMLOG, u8> &M);
 
 	int ColsPermCnt[DIMMAX];
+	int RowsPermCnt[DIMMAX];
 
 	bool Read(string& fname);
 	bool Read(char* fname);
 
 	void ReadLineRaw(ifstream& in, u8* pLine, int cnt);
-	bool InputRaw(string& fname, string sortMode);
-	bool SortRaw(bool ascending);
+	bool InputRaw(string& fname, string sortCols);
+	bool InputSource(string& fname, string sortRows, string sortCols);
+	bool CopyRaw(EnvBase &Src, string& sortRow, string& sortCol);
+
+	// Sorting 
+	bool rowsSorted;
+	s8 RowUnsort[DIMMAX];
+	bool colsSorted;
+	s8 ColUnsort[DIMMAX];
+
+	void SortMat(string &sortRows, string& sortCols);
+
+	void SortNone() {
+		rowsSorted = false;
+		colsSorted = false;
+	}
+
+	// Sorts lanes and sets corresponding unsort table
+	bool SortRaw(bool sortRows, int srcCnt[], s8 unsort[], bool ascending);
+	bool ShuffleMats(FastMatrix<FASTMATDIMLOG, u8> &M, bool shuffleRows, s8 shufTab[]);
 
 	void OutLineRaw(ostream& out, u8* pLine, int i, int cnt);
 	bool WriteRaw(string& fname);
@@ -102,10 +125,6 @@ public:
 	};
 	void GenPerms(int kind, bool doRow, int idxFrom, int idxTo, bool doCheck);
 
-	enum { DPARMAX = 8 };
-	int DPars[DPARMAX];
-	bool DParsSet(int par, int parVal);
-
 	void Dump(ostream& out, int dumpType);
 
 	void DumpMat(ostream& out, FastMatrix<FASTMATDIMLOG, u8> &DMat);
@@ -115,7 +134,8 @@ public:
 
 	virtual void DumpBack(ostream& out) { DumpMissing(out, "DumpBack"); }
 	virtual void DumpLane(ostream& out) { DumpMissing(out, "DumpLane"); }
-	virtual void DumpPSet(ostream& out) { DumpMissing(out, "DumpPSet"); }
+	//virtual void DumpPSet(ostream& out) { DumpMissing(out, "DumpPSet"); }
+	void DumpPSet(ostream& out);
 	virtual void DumpDist(ostream& out) { DumpMissing(out, "DumpDist"); }
 };
 

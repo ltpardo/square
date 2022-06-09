@@ -118,7 +118,7 @@ class InputState {
 public:
 	InputState() {}
 	InputState(istream* _pIn, string& _prompt, string& _name)
-		: pIn(_pIn), prompt(_prompt), name(_name)
+		: pIn(_pIn), prompt(_prompt), name(_name), isBottom(false)
 	{}
 
 	istream* pIn;
@@ -194,6 +194,7 @@ public:
 
 	// Input line and tokenize
 	bool getCmdLine();
+	bool LineIsComment() { return tokenCnt <= 0; }
 
 	// Echo line on console output and logger
 	void showLine();
@@ -230,7 +231,7 @@ public:
 	bool ProcessPerms(string& id, string& kind, string& doRow, string& lfrom, string& lto, string& doCheck);
 	bool ProcessEnvPar(string& par, string & val);
 	bool ProcessRegen(string& id);
-	bool ProcessSort(string& id, string& par);
+	bool ProcessSort(string& id, string& srcId, string& rowOrder, string& colOrder);
 	bool ProcessLink(string& id);
 	bool ProcessCount(string& id, string& lfrom, string& lto, string& ifrom, string& ito);
 	bool ProcessSearch(string& id, string &kind, string& level);
