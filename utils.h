@@ -958,9 +958,13 @@ public:
 	}
 
 	long long totalSteps;
-	void StepsDump() {
+	void StepsCnt() {
 		ms = Tim.LapsedMSecs();
 		totalSteps = searchIdx * searchIdxPeriod + (searchIdxPeriod - period);
+	}
+
+	void StepsDump() {
+		StepsCnt();
 		*pOutRep << " Total Steps " << dec << totalSteps
 			<< "   time " << ms << " msecs" << endl;
 	}

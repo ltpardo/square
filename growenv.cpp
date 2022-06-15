@@ -5,10 +5,17 @@
 
 int GEnv::Search()
 {
+
     int chgCnt = 0;
     SearchInit();
 
     RngTrack.Init(&cout);
+
+    if (blankCnt <= 0) {
+        // No blanks matrix
+        Publish();
+        return 1;
+    }
 
     for ( ; ; ) {
         RngTrack.Collect(srLevel);
@@ -22,8 +29,9 @@ int GEnv::Search()
                 // Found a solution
                 Publish();
                 SearchUpSuccess();
+                 
                 RngTrack.Init(&cout);
-                    Report("  Chg cnt ", chgCnt);
+                //Report("  Chg cnt ", chgCnt);
                 chgCnt = 0;
                 if (DbgSt.SearchLim() <= 0)
                     break;
@@ -34,23 +42,30 @@ int GEnv::Search()
             }
         }
         else {
-            if (srLevel < 0) {
-                // All settings explored: search done
-                break;
-            }
-            else {
-                if (pSrLane->AdvFailed()) {
-                    // Lane blocks on this Setting: enter change mode
+            if (DbgSt.doChange) {
+                if (pSrLane->AdvDeadEnd()) {
+                    // Lane dead ends on this setting: back jump
                     chgCnt++;
-                    if (DbgSt.doChange)
-                        SearchChange();
-                    else
+
+                    // Back jump
+                    if (SearchBackJump()) {
+                        // BJ success: pSrLane already advanced, go down
+                        SearchDn();
+                    }
+                    else {
+                        // BJ failed: go up 
                         SearchUp();
+                    }
                 }
                 else {
-                    // Lane has processed all Perms
+                    // Go up from current lane
                     SearchUp();
                 }
+
+            }
+            else {
+                // NO debugChange: Lane has processed all Perms, search up
+                SearchUp();
             }
         }
     }
@@ -64,10 +79,7 @@ void GEnv::SearchInit()
     srCnt = 0;
     srLevel = srLvlFirst;
     pSrLane = pLanes + srLvlFirst;
-    //growLevel = srLvlFirst;
-    growLevel = -1;
     pSrLane->AdvInit();
-    SetChgAreaNull();
 
     // Initialize all up branches in all entries
     GEntry* pLim = pEntries + blankCnt;
@@ -75,20 +87,9 @@ void GEnv::SearchInit()
         pEnt->InitBranches();
 }
 
-// Expand Change area to include pEnt
-//
-void GEnv::SetChgArea(GEntry* pEnt)
-{
-    if (iChg > pEnt->i)
-        iChg = pEnt->i;
-    if (jChg > pEnt->j)
-        jChg = pEnt->j;
-}
-
 void GEnv::SearchUpSuccess()
 {
     int advCnt = pSrLane->advPerms;
-    //growLevel = pSrLane->gUp;
     srLevel = pSrLane->gUp;
     pSrLane = pLanes + srLevel;
     if (DbgSt.DmpExpand())
@@ -97,8 +98,6 @@ void GEnv::SearchUpSuccess()
 
 void GEnv::SearchUp()
 {
-    //  if (! InChangeMode()) 
-    //    growLevel = pSrLane->gUp;
     int advCnt = pSrLane->advPerms;
     srLevel = pSrLane->gUp;
     pSrLane = pLanes + srLevel;
@@ -106,43 +105,70 @@ void GEnv::SearchUp()
         Report("  UP to lvl / advPerms", srLevel, advCnt);
 }
 
-// Climb up when a pSrLane has not yielded a perm
-void GEnv::SearchChange()
+// Back Jump when pSrLane has dead ended
+//
+bool GEnv::SearchBackJump()
 {
     s16 idx;
-    GEntry* pFail = pSrLane->pEntFirst + pSrLane->failDepth;
-    idx = pFail->changeIdx;
-    GEntry *pChg = pEntries + idx;
 
-    srLevel = pChg->gLevel;
-    pSrLane = pLanes + srLevel;
-    pSrLane->pAdv = pChg;
-    pSrLane->advDepth = pChg->laneLvl;
+    // Back Jump
+    GEntry* pDEnd = pSrLane->pEntFirst + pSrLane->failDepth;
+    idx = pDEnd->bjIdx;
+    GEntry *pBJ = pEntries + idx;
+    s8 bjLevel = pBJ->gLevel;
+    GLane *pBJLane = pLanes + bjLevel;
+    pBJLane->pAdv = pBJ;
+    pBJLane->advDepth = pBJ->laneLvl;
 
-    //SetChgArea(pChg);
     if (DbgSt.DmpExpand())
-        Report("  CHG UP to ", srLevel);
+        Report("  BACKJUMP ", bjLevel);
+
+    bool success = false;
+    while (pBJLane->AdvPerm()) {
+        if (pSrLane->AdvCheckDeadEnd()) {
+            success = true;
+            if (DbgSt.DmpExpand())
+                Report(" CHECKED \n");
+            break;
+        }
+        else
+            if (DbgSt.DmpExpand())
+                Report(" CHECK FAILED \n");
+    }
+
+    srLevel = bjLevel;
+    pSrLane = pBJLane;
+
+    if (! success) {
+        // Discount the perm that failed
+        pBJLane->advPerms--;
+    }
+
+    if (DbgSt.DmpExpand()) {
+        if (! success)
+            if (DbgSt.DmpExpand())
+                Report("  BJUMP FAILED ", srLevel);
+    }
+
+    return success;
+}
+
+// Probe dead ended lane
+//
+bool GEnv::SearchProbeDeadEnd()
+{
+    pSrLane->AdvInit();
+    return pSrLane->AdvPerm();
 }
 
 void GEnv::SearchDn()
 {
     srLevel = pSrLane->gDn;
     pSrLane = pLanes + srLevel;
+    pSrLane->AdvInit();
 
-    if (InChangeMode()) {
-        // Changing
-        pSrLane->AdvCont(iChg, jChg);
-        if (DbgSt.DmpExpand())
-            Report("  DOWN CHG ", srLevel);
-    }
-    else {
-        // Growing: start lane
-        // growLevel = srLevel;
-        pSrLane->AdvInit();
-        //SetChgAreaNull();
-        if (DbgSt.DmpExpand())
-            Report("  DOWN GRW ", srLevel);
-    }
+    if (DbgSt.DmpExpand())
+        Report("  DOWN GRW ", srLevel);
 }
 
 void GEnv::Publish()
@@ -179,9 +205,9 @@ void GEnv::SearchDump()
     if (!VerifyLatSq(RMat))
         Report(" BAD RESULT");
 
+    RngTrack.StepsCnt();
     ReportDec();
-    Report(" RESULT # ", srCnt, hash);
-    RngTrack.StepsDump();
+    Report(" RESULT # hash steps ms", srCnt, hash, RngTrack.totalSteps, (int) RngTrack.ms);
     if (DbgSt.DmpResult())
         LogClient::Dump(DUMPRSLT);
 }
@@ -432,11 +458,11 @@ void GEnv::CompleteLinks(s8 lvl)
             upIdx = pUpEnt->gIdx;
             if (maxIdx < upIdx)
                 maxIdx = upIdx;
-            pEnt->changeIdx = maxIdx;
+            pEnt->bjIdx = maxIdx;
         }
         else {
             // Up entry outside of square: take maxIdx or GIDXNULL
-            pEnt->changeIdx = maxIdx >= 0 ? maxIdx : GEntry::GIDXNULL;
+            pEnt->bjIdx = maxIdx >= 0 ? maxIdx : GEntry::GIDXNULL;
         }
     }
 
@@ -511,7 +537,7 @@ void GEnv::FillBlanks()
 
     GenPermSets();
     if (DbgSt.reportCreate)
-        DisplayChangeLinks();
+        DisplayBJLinks();
 }
 
 //	Generate ExpSets and PSets
@@ -537,33 +563,33 @@ void GEnv::GenPermSets()
 }
 
 // Display changeLinks
-void GEnv::DisplayChangeLinks()
+void GEnv::DisplayBJLinks()
 {
-    GEntry* pEnt, * pChg;
+    GEntry* pEnt, * pBJ;
     s16 chgIdx;
     for (int e = 0; e < blankCnt; e++) {
         pEnt = pEntries + e;
-        chgIdx = pEnt->changeIdx;
+        chgIdx = pEnt->bjIdx;
         if (chgIdx != GEntry::GIDXNULL) {
             // Display link
-            pChg = pEntries + chgIdx;
-            if (pEnt->i == pChg->i) {
+            pBJ = pEntries + chgIdx;
+            if (pEnt->i == pBJ->i) {
                 // Change to left
-                pVMap->ArrowLeft(pEnt->i, pChg->j, pEnt->j);
+                pVMap->ArrowLeft(pEnt->i, pBJ->j, pEnt->j);
             }
-            else if (pEnt->j == pChg->j) {
+            else if (pEnt->j == pBJ->j) {
                 // Change up
-                pVMap->ArrowUp(pEnt->j, pChg->i, pEnt->i);
+                pVMap->ArrowUp(pEnt->j, pBJ->i, pEnt->i);
             }
             else  if (pEnt->InRow()) {
-                // Row entry: left on row, up at pChg
-                pVMap->ArrowLeft(pEnt->i, pChg->j, pEnt->j);
-                pVMap->ArrowUp(pChg->j, pChg->i, pEnt->i);
+                // Row entry: left on row, up at pBJ
+                pVMap->ArrowLeft(pEnt->i, pBJ->j, pEnt->j);
+                pVMap->ArrowUp(pBJ->j, pBJ->i, pEnt->i);
             }
             else {
-                // Col entry: up on col, left on pChg
-                pVMap->ArrowUp(pEnt->j, pChg->i, pEnt->i);
-                pVMap->ArrowLeft(pChg->i, pChg->j, pEnt->j);
+                // Col entry: up on col, left on pBJ
+                pVMap->ArrowUp(pEnt->j, pBJ->i, pEnt->i);
+                pVMap->ArrowLeft(pBJ->i, pBJ->j, pEnt->j);
             }
         }
     }
@@ -601,46 +627,10 @@ bool GLane::AdvInit()
         return false;
 }
 
-// Used instead of AdvInit in change mode
-bool GLane::AdvCont(s8 iChg, s8 jChg)
-{
-    if (entCnt == 0) {
-        pAdv = NULL;
-        return false;
-    }
-
-    advDepth = entCnt - 1;
-    pAdv = pEntFirst + advDepth;
-    bool lastIn = (isRow) ? pAdv->j >= jChg : pAdv->i >= iChg;
-    if (!lastIn || advDepth == 0)
-        // Single entry or out of area
-        return lastIn;
-
-    // Multi entry within change area
-    GEntry* pUp;
-    for ( ; advDepth > 0; ) {
-        pUp = pAdv - 1;
-        if (isRow ? pUp->j < jChg : pUp->i < iChg)
-            // pUp is out of area: pAdv is the result
-            break;
-        // pUp still within change area
-        pAdv = pUp;
-        advDepth--;
-    }
-
-    return true;
-}
-
 bool GLane::AdvPerm()
 {
-    if (entCnt == 0)
-        // Empty Lane: always succeeds
-        return true;
-
-    if (pAdv == NULL)
-        // Top of lane
-        //      Only for lanes with entCnt == 1!!!
-        return false;
+    assert(entCnt > 0);
+    assert(pAdv != NULL);
 
     for (;;) {
         if (!pAdv->Stk.IsEmpty()) {
@@ -649,7 +639,7 @@ bool GLane::AdvPerm()
         else {
             if (pAdv->IsExpanded() || !pAdv->Expand(retDepth)) {
                 // Failed at pAdv
-                if (! AdvClimb())
+                if (!AdvClimb())
                     return false;
                 else
                     continue;
@@ -663,6 +653,49 @@ bool GLane::AdvPerm()
         if (advDepth >= entCnt - 1) {
             // Reached end of gLane: success
             AdvSuccess(pAdv->laneDnBr);
+            return true;
+        }
+        else
+            // Advance and propagate lane branch
+            AdvDown(pAdv->laneDnBr);
+    }
+
+    return false;
+}
+
+bool GLane::AdvCheckDeadEnd()
+{
+    pAdv = pEntFirst;
+    pAdv->Stk.Reset();
+    pAdv->StartPSet();
+    advPerms = 0;
+    advDepth = 0;
+    retDepth = -1;
+
+    for (;;) {
+        if (!pAdv->Stk.IsEmpty()) {
+            pAdv->Pull();
+        }
+        else {
+            if (pAdv->IsExpanded() || !pAdv->Expand(retDepth)) {
+                // Failed at pAdv
+                if (advDepth <= 0) {
+                    // At top
+                    return false;
+                }
+                else {
+                    // Inside lane
+                    pAdv--;
+                    advDepth--;
+                    continue;
+                }
+            }
+        }
+
+        // Success for pAdv
+        //      Climb down
+        if (advDepth >= failDepth) {
+            // Reached previous fail point success
             return true;
         }
         else

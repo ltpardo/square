@@ -145,8 +145,9 @@ public:
 	void ExpandSetReturn(s8& lvl);
 	bool Expand(s8& retLevel);
 
-	// Change data
-	s16 changeIdx;
+	// Back Jump data
+	s16 bjIdx;
+
 	void DumpExpand(bool isRow = false);
 };
 
@@ -188,7 +189,7 @@ public:
 	s8 retDepth;		// Return depth after failure for terminal perm branches
 	s8 failDepth;		// Maximum depth reached on a failed generation
 
-	bool AdvFailed() {
+	bool AdvDeadEnd() {
 		if (advPerms > 0)
 			return false;
 		else {
@@ -200,12 +201,12 @@ public:
 	// Start perm generation for a lane
 	//		Used while growing
 	bool AdvInit();
-	// Perm generation within change area: 
-	//		Used instead of AdvInit in change mode
-	bool AdvCont(s8 iChg, s8 jChg);
 
 	// Generate next perm
 	bool AdvPerm();
+
+	// Verify that lane is viable
+	bool AdvCheckDeadEnd();
 
 	// Move up in generation
 	bool AdvClimb();
@@ -304,26 +305,12 @@ public:
 	virtual void FillEnts();
 
 	// Display changeLinks
-	void DisplayChangeLinks();
+	void DisplayBJLinks();
 
 	//////////////////////////////////////////////////////////
 	// 
 	// SEARCHING
 	//
-	// Grow area
-	s8 growLevel;			// Grow Area boundary level
-	inline bool InChangeMode() { return srLevel < growLevel; }
-
-	// Change area
-	s8 iChg, jChg;			
-	void SetChgAreaNull() {
-		iChg = SCHAR_MAX;
-		jChg = SCHAR_MAX;
-	}
-
-	// Expand Change area to include pEnt
-	void SetChgArea(GEntry* pEnt);
-
 	s8 gLevelMax;
 	s8 srLevel;
 	int srCnt;
@@ -337,8 +324,11 @@ public:
 	void Publish();
 	void SearchDump();
 
-	// Change
-	void SearchChange();
+	// Back Jump when pSrLane has dead ended
+	bool SearchBackJump();
+
+	// Probe dead ended lane
+	bool SearchProbeDeadEnd();
 
 	MatVis *pVMap;
 
