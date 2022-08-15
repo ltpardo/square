@@ -136,6 +136,8 @@ public:
 	bool request();
 };
 
+class GEnv;
+
 class Consola : public LogClient {
 public:
 	Consola() 
@@ -223,6 +225,7 @@ public:
 	// Command Processing
 	bool ProcessRandGen(string& id, string& dim, string& blkPerLane, string& seed);
 	bool ProcessTestChg(string& dim, string& blkPerLane, string& seed, string& cnt);
+	bool ProcessTest(GEnv* pG, int n, int blankPerLane, int seed);
 	bool ProcessRead(string& id, string& fname, string& dim, string& t);
 	bool ProcessDump(string& id, string& kind,
 		string& p0, string& p1, string& p2, string& p3);

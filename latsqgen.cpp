@@ -96,7 +96,8 @@ void LatSqGen::Gen(int _n)
 		xz[i2][k2] = j;
 	}
 
-	Dump(cout, "LATSQ", xy);
+	if (DbgSt.reportCreate)
+		Dump(cout, "LATSQ", xy);
 }
 
 void LatSqGen::BlankRowGen(int j)

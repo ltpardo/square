@@ -21,16 +21,19 @@ enum { DUMPALL, DUMPMAT, DUMPBACK, DUMPSORTED, DUMPRINGS,
 
 class DebugState {
 public:
-	DebugState() : dumpExpand(0), dumpRange(0),
+	DebugState() : dumpExpand(0), dumpTrace(0), dumpRange(0),
 		dumpCompare(0), dumpTerm(0), dumpMakeSingle(0), dumpResult(0),
-		dumpLevel(DIMMAX * 2), searchLim(INT_MAX),
-		noPotSort(true), lowPotFirst(true), doChange(false), reportCreate(false)
+		dumpLevel(DIMMAX * 2), watchLevel(INT_MAX), searchLim(INT_MAX),
+		noPotSort(true), lowPotFirst(true), doLadder(false), reportCreate(false),
+		reportSearch(false)
 	{
 		pOut = &cout;
+		watchLevel = 36;
 	}
 
 	typedef long long Counter;
 	Counter dumpExpand;
+	Counter dumpTrace;
 	Counter dumpRange;
 	Counter dumpCompare;
 	Counter dumpTerm;
@@ -40,12 +43,14 @@ public:
 
 	// Limits
 	int dumpLevel;
+	int watchLevel;
 
 	// Params
 	bool noPotSort;
 	bool lowPotFirst;
-	bool doChange;
+	bool doLadder;
 	bool reportCreate;
+	bool reportSearch;
 
 public:
 	ostream* pOut;
@@ -62,12 +67,57 @@ public:
 	}
 
 	Counter DmpExpand() { return dumpExpand > 0 ? dumpExpand-- : 0; }
+	Counter DmpTrace() { return dumpTrace > 0 ? dumpTrace-- : 0; }
 	Counter DmpRange() { return dumpRange > 0 ? dumpRange-- : 0; }
 	Counter DmpCompare() { return dumpCompare > 0 ? dumpCompare-- : 0; }
 	Counter DmpTerm() { return dumpTerm > 0 ? dumpTerm-- : 0; }
 	Counter DmpMakeSingle() { return dumpMakeSingle > 0 ? dumpMakeSingle-- : 0; }
 	Counter DmpResult() { return dumpResult > 0 ? dumpResult-- : 0; }
 	Counter SearchLim() { return searchLim > 0 ? --searchLim : 0; }
+
+	bool Set(string& par0, int cnt) {
+		if (par0 == "exp") {
+			dumpExpand = cnt;
+		}
+		else if (par0 == "trace") {
+			dumpTrace = cnt;
+		}
+		else if (par0 == "range") {
+			dumpRange = cnt;
+		}
+		else if (par0 == "watch") {
+			watchLevel = cnt;
+		}
+		else if (par0 == "comp") {
+			dumpCompare = cnt;
+		}
+		else if (par0 == "ladder") {
+			doLadder = (cnt > 0);
+		}
+		else if (par0 == "term") {
+			dumpTerm = cnt;
+		}
+		else if (par0 == "single") {
+			dumpMakeSingle = cnt;
+		}
+		else if (par0 == "searchlim") {
+			searchLim = cnt;
+		}
+		else if (par0 == "dumpres") {
+			dumpResult = cnt;
+		}
+		else if (par0 == "reportcreate") {
+			reportCreate = true;
+		}
+		else if (par0 == "reportsearch") {
+			reportSearch = true;
+		}
+		else {
+			cerr << " DEBUG bad param " << par0 << endl;
+			return false;
+		}
+		return true;
+	}
 };
 
 extern DebugState DbgSt;
@@ -764,16 +814,16 @@ public:
 	static inline LvlBranch LvlFlag(LvlBranch branch) { return branch & FLAGMASK; }
 #endif
 
-	void LvlBranchFinish(LvlBranch& branch, int lV, bool isLast) {
+	static void LvlBranchFinish(LvlBranch& branch, int lV, bool isLast) {
 		branch |= (lV & LVSZ1MASK);
 		if (isLast)
 			branch |= BLASTBIT;
 	}
 
-	inline bool LvlIsLast(LvlBranch branch) { return (branch & BLASTBIT) != 0; }
-	inline bool LvlIsTerm(LvlBranch branch) { return (branch & BTERMBIT) != 0; }
-	inline u8 LvlGetV(LvlBranch branch) { return branch & LVSZ1MASK; }
-	inline u8 LvlExtractV(LvlBranch& branch) {
+	static inline bool LvlIsLast(LvlBranch branch) { return (branch & BLASTBIT) != 0; }
+	static inline bool LvlIsTerm(LvlBranch branch) { return (branch & BTERMBIT) != 0; }
+	static inline u8 LvlGetV(LvlBranch branch) { return branch & LVSZ1MASK; }
+	static inline u8 LvlExtractV(LvlBranch& branch) {
 		u8 v = (u8)(branch & LVSZ1MASK);
 		// Shift mask down, keeping flags
 		branch = ((branch & (~(BLASTBIT | BTERMBIT))) >> LVSZ1)
@@ -781,7 +831,7 @@ public:
 		return v;
 	}
 
-	inline u8 LvlTermAdv(LvlBranch& branch) {
+	static inline u8 LvlTermAdv(LvlBranch& branch) {
 		// Discard previus v: shift mask down, keeping flags
 		branch = ((branch & (~(BLASTBIT | BTERMBIT))) >> LVSZ1)
 			| (branch & (BLASTBIT | BTERMBIT));
@@ -789,7 +839,7 @@ public:
 		return v;
 	}
 
-	inline int LvlGetCnt(LvlBranch branch) {
+	static inline int LvlGetCnt(LvlBranch branch) {
 		if (LvlIsTerm(branch))
 			return 1;
 
@@ -799,14 +849,14 @@ public:
 		return cnt;
 	}
 
-	inline bool LvlCntIsOne(LvlBranch branch) {
+	static inline bool LvlCntIsOne(LvlBranch branch) {
 		if (LvlIsTerm(branch))
 			return true;
 		else
 			return (branch & CNTINPOSMASK) == CNTONEMASK;
 	}
 
-	inline int LvlGetDisp(LvlBranch branch) {
+	static inline int LvlGetDisp(LvlBranch branch) {
 		return (branch >> (LVSZ1 + CNTSZ1)) & DISPMASK;
 	}
 
@@ -874,7 +924,7 @@ public:
 	void DumpExpanded(ostream& out, int lvl, LvlBranch br);
 
 	string nodeId;
-	void DumpNodeId(ostream& out, int lvl, ShortLink nodeDisp = LVLNULL);
+	static void DumpNodeId(ostream& out, bool isRow, int lvl, ShortLink nodeDisp = LVLNULL);
 };
 
 class RangeTrack {
@@ -900,12 +950,14 @@ public:
 	int period;
 	long long searchIdx;
 	const int searchIdxPeriod = 1000000;
-	const int dumpFreq = 10;
+	//const int dumpFreq = 10;
+	int dumpFreq = 1;
 	void Init(ostream* _pOutRep = nullptr) {
 		pOutRep = (_pOutRep == nullptr) ? &cout : _pOutRep;
 		searchIdx = 0;
 		lvlTotal = 0;
 		Tim.Start();
+		CollRgInit();
 		PeriodInit();
 	}
 
@@ -915,6 +967,7 @@ public:
 		period = searchIdxPeriod;
 		posMin = DIMMAX * DIMMAX;
 		posMax = 0;
+		CollRgPeriodInit();
 	}
 
 	void Collect(int colLevel, int pos = -1) {
@@ -924,11 +977,8 @@ public:
 		if (lvlMax < colLevel)
 			lvlMax = colLevel;
 
-		if (pos >= 0) {
-			if (posMin > pos)
-				posMin = pos;
-			if (posMax < pos)
-				posMax = pos;
+		if (rgCut > 0) {
+			CollRg(colLevel);
 		}
 
 		if (period == 0) {
@@ -938,6 +988,50 @@ public:
 				lvlTotal = lvlMax;
 			PeriodInit();
 			searchIdx++;
+		}
+	}
+
+	const int rgCutINIT = -1;
+	int rgCut;
+	int rgCnt;
+	int lowerCnt, higherCnt;
+	int higherCntMax;
+	enum { LOWER, HIGHER } cutSt;
+
+	void CollRgInit() {
+		rgCut = rgCutINIT;
+		cutSt = LOWER;
+		CollRgPeriodInit();
+	}
+
+	void CollRgPeriodInit() {
+		lowerCnt = 0;
+		higherCnt = 0;
+		higherCntMax = -1;
+	}
+
+	void CollRg(int colLevel) {
+		if (cutSt == LOWER) {
+			if (colLevel < rgCut) {
+				rgCnt++;
+			}
+			else {
+				lowerCnt++;
+				cutSt = HIGHER;
+				rgCnt = 1;
+			}
+		}
+		else {
+			if (colLevel >= rgCut) {
+				rgCnt++;
+			}
+			else {
+				higherCnt++;
+				if (higherCntMax < rgCnt)
+					higherCntMax = higherCnt;
+				cutSt = LOWER;
+				rgCnt = 1;
+			}
 		}
 	}
 
@@ -955,6 +1049,15 @@ public:
 		for (int i = lvlMin; i <= lvlMax; i++)
 			*pOutRep << setw(3) << i;
 		*pOutRep << endl;
+
+		if (rgCut > 0)
+			CollRgDump();
+	}
+
+	void CollRgDump() {
+		*pOutRep << "         RG  LOWER " << dec << lowerCnt
+			<< "  HIGHER " << higherCnt << "   HIGHERMAX " << higherCntMax
+			<< endl;
 	}
 
 	long long totalSteps;

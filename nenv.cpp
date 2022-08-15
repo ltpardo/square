@@ -367,10 +367,12 @@ int Histo<LaneFull>::Scan(int j)
 				// Forced value
 				int i = LastCol[v];
 				if (fixCnt == 0) {
-					Report("    Scan col ", j);
+					if (DbgSt.reportCreate)
+						Report("    Scan col ", j);
 				}
 				fixCnt++;
-				Report(" row/v ", i, v);
+				if (DbgSt.reportCreate)
+					Report(" row/v ", i, v);
 
 				// Change Mat and SLanes
 				(* pMat)[i][j] = v;
@@ -389,7 +391,8 @@ int Histo<LaneFull>::Scan(int j)
 	}
 
 	if (fixCnt != 0)
-		Report("\n");
+		if (DbgSt.reportCreate)
+			Report("\n");
 
 	return fixCnt;
 }

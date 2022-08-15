@@ -87,9 +87,9 @@ void Consola::showLine()
 // Echo line on Logger
 void Consola::logLine()
 {
-	string msg = "\n>>>>  ";
+	string msg = "\n>>  ";
 	msg += lineBuf;
-	msg += "   >>>>\n";
+	msg += " >>\n";
 	Report(msg);
 }
 
@@ -236,9 +236,9 @@ void Consola::ReportTime()
 {
 	ostringstream msStr;
 	msStr << ms;
-	string msg = "  [[[[[  Command Time ";
+	string msg = " [Cmd Time ";
 	msg += msStr.str();
-	msg += " msecs  ]]]]]\n";
+	msg += " ms]\n";
 	Report(msg);
 }
 

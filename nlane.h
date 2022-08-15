@@ -170,7 +170,7 @@ public:
 	void DumpExpand(PermSet* pLnSet, LvlBranch lnUpBr, s8 lnLvl,
 		PermSet* pEdSet, LvlBranch edUpBr, s8 edLvl)
 	{
-		*DbgSt.pOut << pLnSet->searchId << " ";
+		*DbgSt.pOut << "   " << pLnSet->searchId << " ";
 		pLnSet->DumpExpanded(*DbgSt.pOut, lnLvl, lnUpBr);
 		*DbgSt.pOut << " <<>> ";
 
@@ -182,7 +182,8 @@ public:
 	void DumpPull(u8 selV, PermSet* pLnSet, LvlBranch lnDnBr, s8 lnLvl,
 		PermSet* pEdSet, LvlBranch edDnBr, s8 edLvl)
 	{
-		*DbgSt.pOut << "PULL selV: " << (int) selV << " | ";
+		*DbgSt.pOut << "   " << pLnSet->searchId << " ";
+		*DbgSt.pOut << "PULL v: " << (int) selV << " depth " << (int)lnLvl << " | ";
 		*DbgSt.pOut << pLnSet->searchId << " ";
 		pLnSet->DumpBranch(*DbgSt.pOut, lnLvl, lnDnBr);
 		*DbgSt.pOut << " <<>> ";

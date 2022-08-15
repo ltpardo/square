@@ -102,6 +102,11 @@ public:
 		for (ostream* pStr = StrFirst(); pStr != 0; pStr = StrNext())
 			*pStr << dec;
 	}
+	void ReportHex() {
+		for (ostream* pStr = StrFirst(); pStr != 0; pStr = StrNext())
+			*pStr << hex;
+	}
+
 	void Report(string& msg) {
 		for (ostream* pStr = StrFirst(); pStr != 0; pStr = StrNext())
 			*pStr << msg;
@@ -139,9 +144,81 @@ public:
 		for (ostream* pStr = StrFirst(); pStr != 0; pStr = StrNext())
 			*pStr << msg << " " << par0 << " " << par1 << " " << par2 << " " << par3 << endl;
 	}
+	void Report(const char* msg, int par0, int par1, int par2, int par3, int par4) {
+		for (ostream* pStr = StrFirst(); pStr != 0; pStr = StrNext())
+			*pStr << msg << " " << par0 << " " << par1 << " " << par2 << " " << par3 << " " << par4 << endl;
+	}
 	void Report(string & str1, string & str2, int par = 0) {
 		for (ostream* pStr = StrFirst(); pStr != 0; pStr = StrNext())
 			*pStr << str1 << " " << str2 << " " << par << endl;
+	}
+
+	void FldWd(int wd) {
+		for (ostream* pStr = StrFirst(); pStr != 0; pStr = StrNext()) {
+			if (wd < 0)
+				*pStr << " ";
+			else
+				*pStr << setw(wd);
+		}
+	}
+
+	void Rep(string& str1) {
+		for (ostream* pStr = StrFirst(); pStr != 0; pStr = StrNext())
+			*pStr << str1;
+	}
+
+	void Rep(const char *pMsg) {
+		for (ostream* pStr = StrFirst(); pStr != 0; pStr = StrNext())
+			*pStr << pMsg;
+	}
+
+	void RepEndl() {
+		for (ostream* pStr = StrFirst(); pStr != 0; pStr = StrNext())
+			*pStr << endl;
+	}
+
+	void RepEndl(const char* pMsg) {
+		for (ostream* pStr = StrFirst(); pStr != 0; pStr = StrNext())
+			*pStr << pMsg << endl;
+	}
+
+	void Rep(s8 par, int wd = -1) {
+		FldWd(wd);
+		for (ostream* pStr = StrFirst(); pStr != 0; pStr = StrNext()) {
+			*pStr << (int) par;
+		}
+	}
+
+	void Rep(s16 par, int wd = -1) {
+		FldWd(wd);
+		for (ostream* pStr = StrFirst(); pStr != 0; pStr = StrNext()) {
+			*pStr << par;
+		}
+	}
+	void Rep(int par, int wd = -1) {
+		FldWd(wd);
+		for (ostream* pStr = StrFirst(); pStr != 0; pStr = StrNext()) {
+			*pStr << par;
+		}
+	}
+	void Rep(u32 par, int wd = -1) {
+		FldWd(wd);
+		for (ostream* pStr = StrFirst(); pStr != 0; pStr = StrNext()) {
+			*pStr << par;
+		}
+	}
+
+	void Rep(long long par, int wd = -1) {
+		FldWd(wd);
+		for (ostream* pStr = StrFirst(); pStr != 0; pStr = StrNext()) {
+			*pStr << par;
+		}
+	}
+	void Rep(u64 par, int wd = -1) {
+		FldWd(wd);
+		for (ostream* pStr = StrFirst(); pStr != 0; pStr = StrNext()) {
+			*pStr << par;
+		}
 	}
 };
 

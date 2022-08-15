@@ -224,40 +224,61 @@ bool Consola::ProcessRandGen(string& id, string& dim, string& blkPerLane, string
 	return pGEnv->GenRaw(n, tokToInt(blkPerLane), tokToInt(seed));
 }
 
-bool Consola::ProcessTestChg(string& dim, string& blkPerLane, string& seedPar, string & cntPar)
+bool Consola::ProcessTestChg(string& dim, string& blkPerLane, string& seedPar, string& cntPar)
 {
 	int n = tokToInt(dim);
 	int blankPerLane = tokToInt(blkPerLane);
-	int cnt = tokToInt(cntPar);
+	int seed = tokToInt(seedPar);
+	GEnv* pG;
 
-	srand(tokToInt(seedPar));
-
-	int seed;
-	int cntNO, cntCHG;
-	for (int i = 0; i < cnt; i++) {
-		GEnv* pG = new GEnv(n);
-		seed = rand();
+	if (cntPar == "") {
+		pG = new GEnv(n);
+		ProcessTest(pG, n, blankPerLane, seed);
+	}
+	else {
+		int cnt = tokToInt(cntPar);
 		srand(seed);
+		for (int i = 0; i < cnt; i++) {
+			GEnv* pG = new GEnv(n);
+			seed = rand();
+			srand(seed);
 
-		pG->GenRaw(n, blankPerLane, seed);
-		((EnvBase*)pG)->HistoScan();
-		pG->FillBlanks();
-
-		DbgSt.doChange = false;
-		cntNO = pG->Search();
-
-		DbgSt.doChange = true;
-		cntCHG = pG->Search();
-
-		if (cntNO != cntCHG) {
-			Report(" SEARCH DIFF seed cntNO cntCHG ", seed, cntNO, cntCHG);
+			ProcessTest(pG, n, blankPerLane, seed);
 		}
-		else
-			Report(" SEARCH SAME seed cnt ", seed, cntNO);
 	}
 	return true;
 }
 
+bool Consola::ProcessTest(GEnv* pG, int n, int blankPerLane, int seed)
+{
+	int cntSTD, cntLAD;
+	u64 hSTD, hLAD;
+
+	pG->GenRaw(n, blankPerLane, seed);
+	((EnvBase*)pG)->HistoScan();
+	pG->FillBlanks();
+
+	cntSTD = pG->Search();
+	hSTD = pG->srHash;
+	cntLAD = pG->SearchLadder();
+	hLAD = pG->srHash;
+
+	if (cntSTD != cntLAD || hSTD != hLAD) {
+		ReportDec();
+		Report(" SEARCH DIFF seed cntSTD cntCHG ", seed, cntSTD, cntLAD);
+		ReportHex();
+		Rep("    hSTD:");
+		Rep(hSTD, 17);
+		Rep("  hLAD:");
+		Rep(hLAD, 17);
+		RepEndl();
+		return false;
+	}
+	else {
+		Report(" SEARCH SAME seed cnt ", seed, cntSTD);
+		return true;
+	}
+}
 
 bool Consola::ProcessWriteRaw(string& id, string& fname)
 {
@@ -389,7 +410,10 @@ bool Consola::ProcessSearch(string& id, string& kind, string& level)
 	}
 	else if (pSym->typ.t == SymType::TYPGENV) {
 		GEnv* pG = (GEnv*)pSym->pObj;
-		pG->Search();
+		if (DbgSt.doLadder)
+			pG->SearchLadder();
+		else
+			pG->Search();
 		return true;
 	}
 	else
@@ -444,36 +468,7 @@ bool Consola::ProcessDebug(string& par0, string& par1, string& par2)
 
 	int cnt = tokToInt(par1);
 
-	if (par0 == "exp") {
-		DbgSt.dumpExpand = cnt;
-	}
-	else if (par0 == "range") {
-		DbgSt.dumpRange = cnt;
-	}
-	else if (par0 == "comp") {
-		DbgSt.dumpExpand = cnt;
-	}
-	else if (par0 == "change") {
-		DbgSt.doChange = (cnt > 0);
-	}
-	else if (par0 == "term") {
-		DbgSt.dumpTerm = cnt;
-	}
-	else if (par0 == "single") {
-		DbgSt.dumpMakeSingle = cnt;
-	}
-	else if (par0 == "searchlim") {
-		DbgSt.searchLim = cnt;
-	}
-	else if (par0 == "dumpres") {
-		DbgSt.dumpResult = cnt;
-	}
-	else if (par0 == "reportcreate") {
-		DbgSt.reportCreate = true;
-	}
-	else
-		cerr << " DEBUG bad param " << par0 << endl;
-	return true;
+	return DbgSt.Set(par0, cnt);
 }
 
 bool Consola::ProcessLink(string& id)

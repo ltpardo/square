@@ -650,14 +650,14 @@ void PermSet::DumpBranch(ostream& out, int lvl, LvlBranch br)
 	else {
 		out << "<" << hex << (int) LvlGetV(br) << ":";
 		out << hex << LvlGetCnt(br) << ",";
-		DumpNodeId(out, lvl + 1, LvlGetDisp(br));
+		PermSet::DumpNodeId(out, isRow, lvl + 1, LvlGetDisp(br));
 		out << nodeId << "> ";
 	}
 }
 
-void PermSet::DumpNodeId(ostream& out, int lvl, ShortLink nodeDisp)
+void PermSet::DumpNodeId(ostream& out, bool _isRow, int lvl, ShortLink nodeDisp)
 {
-	out << (isRow ? "R" : "C") << hex << setw(1) << lvl;
+	out << (_isRow ? "R" : "C") << hex << setw(1) << lvl;
 	if (nodeDisp != (ShortLink) LVLNULL)
 		out << "_" << nodeDisp;
 	else
@@ -674,7 +674,7 @@ void PermSet::DumpLvl(ostream& out, int lvl)
 	string lead = "   ";
 	out << endl << lead;
 	for (int node = 0; node < Counts.NodeCnt[lvl]; node ++) {
-		DumpNodeId(out, lvl, disp);
+		PermSet::DumpNodeId(out, isRow, lvl, disp);
 		out << " ";
 		do {
 			br = *pBr++;
@@ -699,7 +699,7 @@ void PermSet::DumpExpanded(ostream& out, int lvl, LvlBranch br)
 	else {
 		ShortLink nodeDisp = LvlGetDisp(br);
 		LvlBranch* pBr = LvlBase[lvl] + nodeDisp;
-		DumpNodeId(out, lvl, nodeDisp);
+		PermSet::DumpNodeId(out, isRow, lvl, nodeDisp);
 		out << " ";
 		do {
 			br = *pBr++;
