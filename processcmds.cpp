@@ -251,8 +251,8 @@ bool Consola::ProcessTestChg(string& dim, string& blkPerLane, string& seedPar, s
 
 bool Consola::ProcessTest(GEnv* pG, int n, int blankPerLane, int seed)
 {
-	int cntSTD, cntLAD;
-	u64 hSTD, hLAD;
+	int cntSTD, cntTST;
+	u64 hSTD, hTST;
 
 	pG->GenRaw(n, blankPerLane, seed);
 	((EnvBase*)pG)->HistoScan();
@@ -260,17 +260,29 @@ bool Consola::ProcessTest(GEnv* pG, int n, int blankPerLane, int seed)
 
 	cntSTD = pG->Search();
 	hSTD = pG->srHash;
-	cntLAD = pG->SearchLadder();
-	hLAD = pG->srHash;
+	switch (DbgSt.doLadder) {
+	case 1:
+		cntSTD = pG->SearchLadder();
+		break;
 
-	if (cntSTD != cntLAD || hSTD != hLAD) {
+	case 2:
+		cntSTD = pG->SearchDEState();
+		break;
+
+	default:
+		cerr << "Wrong doLadder Parameter" << endl;
+	}
+	cntTST = pG->SearchLadder();
+	hTST = pG->srHash;
+
+	if (cntSTD != cntTST || hSTD != hTST) {
 		ReportDec();
-		Report(" SEARCH DIFF seed cntSTD cntCHG ", seed, cntSTD, cntLAD);
+		Report(" SEARCH DIFF seed cntSTD cntTST ", seed, cntSTD, cntTST);
 		ReportHex();
 		Rep("    hSTD:");
 		Rep(hSTD, 17);
-		Rep("  hLAD:");
-		Rep(hLAD, 17);
+		Rep("  hTST:");
+		Rep(hTST, 17);
 		RepEndl();
 		return false;
 	}
@@ -410,10 +422,22 @@ bool Consola::ProcessSearch(string& id, string& kind, string& level)
 	}
 	else if (pSym->typ.t == SymType::TYPGENV) {
 		GEnv* pG = (GEnv*)pSym->pObj;
-		if (DbgSt.doLadder)
-			pG->SearchLadder();
-		else
+		switch (DbgSt.doLadder) {
+		case 0:
 			pG->Search();
+			break;
+
+		case 1:
+			pG->SearchLadder();
+			break;
+
+		case 2:
+			pG->SearchDEState();
+			break;
+
+		default:
+			cerr << "Wrong doLadder Parameter" << endl;
+		}
 		return true;
 	}
 	else

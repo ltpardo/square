@@ -7,11 +7,8 @@ int GEnv::Search()
 {
     int watchCnt = 0;
 
-    if(!SearchInit())
+    if(!SearchInit(SRCHSTD))
         return srCnt;
-
-    if (DbgSt.reportSearch)
-        RepEndl("STANDARD SEARCH");
 
     for (; ; ) {
         if (DbgSt.DmpTrace())
@@ -27,6 +24,9 @@ int GEnv::Search()
             watchCnt++;
         }
 
+        if (DbgSt.Inspect())
+            SearchInspect();
+
         if (pSrLane->AdvPerm()) {
             // Perm found: go down (or success!)
             if (!SearchDn())
@@ -40,20 +40,512 @@ int GEnv::Search()
         }
     }
 
-    SearchEnd("END OF STD SEARCH ");
+    SearchEnd();
     return srCnt;
 }
 
+//  Search With ladder and DE state checking
+//
+int GEnv::SearchDEState()
+{
+    int watchCnt = 0;
+
+    if (!SearchInit(SRCHDEST))
+        return srCnt;
+
+    for (; ; ) {
+        if (DbgSt.DmpTrace()) {
+            DumpTrace();
+        }
+
+        RngTrack.Collect(srLevel);
+
+        // Release debugging stop
+        if (srLevel >= DbgSt.watchLevel) {
+            watchCnt++;
+        }
+
+        assert(srLevel <= srLvlLast);
+
+        if (DbgSt.Inspect())
+            SearchInspect();
+
+        if (pSrLane->AdvPermDEState(DEActiveOn())) {
+            // Found valid perm
+            if (DEActiveOn())
+                // Process DEState info
+                SearchDnDEState();
+
+            // Continue to level down (or success!)
+            if (!SearchDn())
+                // Success, with limit reached
+                break;
+        }
+        else {
+            // No valid perm left in lane
+            if (!SearchUpDEState())
+                // End of search
+                break;
+        }
+
+        if (DbgSt.Inspect())
+            SearchDEInspDEAct();
+    }
+
+    SearchEnd();
+    return srCnt;
+}
+
+// Search down action when dead end is active
+//
+void GEnv::SearchDnDEState()
+{
+    if (pSrLane->DEStateOn()) {
+        DEActiveDec();
+
+        // Reset DE related info
+        pSrLane->DEStateReset();
+        // Erase touched marks above
+        pSrLane->XferAbove(0, pSrLane->xferLast, false);
+        pSrLane->XferReset();
+
+        if (DbgSt.DmpTrace()) {
+            ReportDec();
+            Report("DEOFF lvl deActive", srLevel, deActive);
+        }
+    }
+    else if (pSrLane->Touched()) {
+        // Erase touched marks above
+        pSrLane->XferAbove(0, pSrLane->xferLast, false);
+        pSrLane->XferReset();
+    }
+}
+
+// Lane has a valid perm
+bool GEnv::SearchDn()
+{
+    if (srLevel >= srLvlLast) {
+        // Found a solution
+        Publish();
+        if (!SearchUpSuccess())
+            // Search limit reached
+            return false;
+        else
+            // Will continue searching
+            return true;
+    }
+
+    // Go down
+    srLevel = pSrLane->gDn;
+    pSrLane = pLanes + srLevel;
+    pSrLane->AdvInit();
+    if (!DEActiveOn()) {
+        pSrLane->DEStateReset();
+        pSrLane->TouchReset();
+        pSrLane->XferReset();
+    }
+
+    if (DbgSt.DmpTrace()) {
+        DumpInsCnt();
+        ReportDec();
+        Report("DOWN TO ", srLevel);
+    }
+    return true;
+}
+
+bool GEnv::SearchUpDEState()
+{
+    if (srLevel <= srLvlFirst)
+        // End of search
+        return false;
+
+    if (pSrLane->AdvDeadEnd()) {
+        // Lane dead ends (NO success) on this setting
+        if (pSrLane->DEStateOn()) {
+            // Lane already was dead ended -- correct touches
+            s8 xferNew = pSrLane->TouchCount();
+            if (xferNew < pSrLane->failDepth)
+                xferNew = pSrLane->failDepth;
+            pSrLane->XferFixAbove(xferNew);
+        }
+        else {
+            // Lane was not dead ended 
+            // Increase dead end count
+            DEActiveInc();
+            // And transfer all touches above
+            pSrLane->XferCountFromMask();
+            // Correct for failDepth
+            if (pSrLane->xferLast < pSrLane->failDepth)
+                pSrLane->xferLast = pSrLane->failDepth;
+            pSrLane->XferAbove(0, pSrLane->xferLast, true);
+        }
+
+        //  Save Dead End state: sets deLast and deClosest
+        pSrLane->DEStateSave();
+
+        if (DbgSt.DmpTrace()) {
+            //DumpInsCnt();
+            ReportDec();
+            Report("DEON lvl deActive fail xfer",
+                srLevel, deActive, pSrLane->failDepth, pSrLane->xferLast);
+        }
+        deCnt++;
+    }
+    else if (pSrLane->DEStateOn()) {
+        // Lane was dead ended but not anymore
+        DEActiveDec();
+        pSrLane->DEStateReset();
+        // Correct touches to ONLY touch mask
+        pSrLane->XferFixAbove(pSrLane->TouchCount());
+    }
+    else if (pSrLane->Touched()) {
+        // Lane was touched or dead ended: transfer touches above
+        pSrLane->XferCountFromMask();
+        pSrLane->XferAbove(0, pSrLane->xferLast, true);
+    }
+
+    srLevel = pSrLane->gUp;
+    pSrLane = pLanes + srLevel;
+
+#define SKIPLADDER
+#ifdef SKIPLADDER
+    if (DEActiveOn() /* && pSrLane->AdvDeadEnd() */) {
+        // Skip untouched lanes
+        while (!pSrLane->Touched()) {
+            srLevel = pSrLane->gUp;
+            pSrLane = pLanes + srLevel;
+        }
+    }
+#endif SKIPLADDER
+
+    if (DbgSt.DmpTrace()) {
+        DumpInsCnt();
+        ReportDec();
+        Report("UPTO  lvl ", srLevel);
+    }
+
+    return true;
+}
+
+// Propagate branch after gLane
+//
+void GLane::AdvSuccess(LvlBranch afterDnBr)
+{
+    advPerms++;
+    if (pEntAfter != nullptr && (advDepth == entCnt - 1))
+        pEntAfter->edgeUpBr = afterDnBr;
+}
+
+// Generate next perm with DE State check
+//		Iterates from pAdv until reaching advDepth >= advLast
+//
+bool GLane::AdvPermDEState(bool deActive)
+{
+    assert(entCnt > 0);
+    assert(pAdv != NULL);
+
+    for (;;) {
+        if (!pAdv->Stk.IsEmpty()) {
+            pAdv->Pull();
+        }
+        else {
+            if (pAdv->IsExpanded() || !pAdv->Expand(retDepth)) {
+                // Failed at pAdv
+                if (!AdvClimb())
+                    return false;
+                else
+                    continue;
+            }
+        }
+
+        // Success for pAdv
+        //      Store edge branch -- check DE State
+        if (!AdvPropDEState(deActive, pAdv->pDnEdge, pAdv->edgeDnBr))
+            continue;
+
+        //      Climb down
+        if (advDepth >= advLast) {
+            // Reached end of gLane: success unless DE State fails
+            if (!AdvPropDEState(deActive, pEntAfter, pAdv->laneDnBr))
+                continue;
+            advPerms++;
+            return true;
+        }
+        else
+            // Advance and propagate lane branch
+            AdvDown(pAdv->laneDnBr);
+    }
+
+    return false;
+}
+
+// Propagate branch after gLane with DE State Check
+bool GLane::AdvPropDEState(bool deActive, GEntry* pDn, LvlBranch br)
+{
+    if (pDn == NULL)
+        return true;
+
+    if (deActive) {
+        GLane* pTargLn = this + (pDn->gLevel - gLevel);
+        if (pTargLn->DEStateOn()                    /* Target lane is dead end */
+            && (pDn->laneLvl <= pTargLn->deLast)) { /* and pDn in dead end area */
+            pTargLn->deChgCnt += pDn->EdgeStateChange(br);
+#if 0
+            if (!pTargLn->AdvPropVerify())
+                cerr << " ADV PROP VERIFY FAILED" << endl;
+#endif
+            if ((pDn->laneLvl == pTargLn->deClosest)    /* Target closed */
+                && pTargLn->deChgCnt == 0               /* With no state change */
+                && !pTargLn->WasRejected()) {           /* And it is DEnded by state */
+                if (DbgSt.dumpTrace)
+                    cerr << " >>> ADV PROP REJECTED lvl: " << (int)(pTargLn->gLevel)
+                        << " closest: " << (int)(pTargLn->deClosest)
+                        << " deLast: " << (int)(pTargLn->deLast)
+                        << endl;
+                advRejCnt++;
+                return false;
+            }
+            else
+                return true;
+        }
+    }
+
+    // No deActive or target lane is not dead ended
+    pDn->edgeUpBr = br;
+    return true;
+}
+
+bool GLane::AdvPropVerify()
+{
+    s8 chgCnt = 0;
+    for (s8 d = 0; d <= deLast; d++) {
+        if (pEntFirst[d].EdgeStateDiff())
+            chgCnt++;
+    }
+    if (chgCnt != deChgCnt)
+        return false;
+    return true;
+}
+
+////////////////////////////////////////////////////////////////
+// 
+//  INSPECT
+// 
+////////////////////////////////////////////////////////////////
+
+// Inspect GEnv
+//
+bool GEnv::SearchInspect()
+{
+    insCnt++;
+
+    if (DbgSt.InspectPause()) {
+        if (insCnt == DbgSt.inspect) {
+            cerr << ">>>> INSPECT PAUSE >>>>" << endl;
+        }
+    }
+
+    if (srType != SearchType::SRCHDEST)
+        return true;
+
+    for (insLvl = srLvlFirst; insLvl < srLevel; ) {
+        pInsp = pLanes + insLvl;
+        SearchDEInspAbove();
+        insLvl = pInsp->gDn;
+    }
+    SearchDEInspSrLevel();
+    if (srLevel >= srLvlLast)
+        return true;
+
+    for (insLvl = pSrLane->gDn; ; ) {
+        pInsp = pLanes + insLvl;
+        SearchDEInspBelow();
+        if (insLvl >= srLvlLast)
+            break;
+        insLvl = pInsp->gDn;
+    }
+    return true;
+}
+
+bool GEnv::SearchDEInspDEAct()
+{
+    if (!DEActiveOn())
+        return true;
+    insDEActive = 0;
+
+    for (insLvl = srLevel; ; ) {
+        pInsp = pLanes + insLvl;
+        if (pInsp->DEStateOn())
+            insDEActive++;
+        if (insLvl >= srLvlLast)
+            break;
+        insLvl = pInsp->gDn;
+    }
+
+    if (insDEActive != deActive) {
+        SearchDEInspError();
+        return false;
+    }
+    else
+        return true;
+}
+
+bool GEnv::SearchDEInspAbove()
+{
+    s8 d;
+    GEntry* pEnt;
+    if (pInsp->DEStateOn())
+        SearchDEInspError();
+    if (pInsp->XferWasDone())
+        SearchDEInspError();
+    if (DEActiveOn()) {
+        for (d = 0; d < pInsp->entCnt; d++) {
+            if (pInsp->TouchedEntry(d)) {
+                pEnt = pInsp->pEntFirst + d;
+                // Transfer has to happen from srLevel or below
+                if (pEnt->dnEdge < pSrLane->entFirst)
+                    SearchDEInspError();
+            }
+        }
+
+        // Check pEntAfter touch
+        if (pInsp->TouchedEntry(pInsp->entCnt)) {
+            pEnt = pInsp->pEntAfter;
+            // Transfer has to happen from srLevel or below
+            if (pEnt->gIdx < pSrLane->entFirst)
+                SearchDEInspError();
+        }
+
+    }
+    else {
+        if (pInsp->Touched())
+            SearchDEInspError();
+    }
+    return true;
+}
+
+bool GEnv::SearchDEInspSrLevel()
+{
+    return true;
+}
+
+bool GEnv::SearchDEInspBelow()
+{
+    if (insLvl <= 0)
+        SearchDEInspError();
+    if (DEActiveOn() && (insLvl <= deBottom)) {
+        if ((pInsp->DEStateOn() || pInsp->Touched()) && !pInsp->XferWasDone())
+            SearchDEInspError();
+    }
+    else {
+        if (pInsp->DEStateOn())
+            SearchDEInspError();
+        if (pInsp->XferWasDone())
+            SearchDEInspError();
+        if (pInsp->Touched())
+            SearchDEInspError();
+    }
+
+    return true;
+}
+
+bool GEnv::SearchDEInspError()
+{
+    if (insCntSave < 0) {
+        insCntSave = insCnt;
+        cerr << "FIRST INSPECT ERROR at " << insCnt << endl;
+    }
+    return true;
+}
+
+// Initialize GEnv
+// Returns false if matrix has no blanks
+//
+bool GEnv::SearchInit(SearchType _srType)
+{
+    srType = _srType;
+
+    srCnt = 0;
+    srHash = 0;
+    deCnt = 0;
+
+    // Init lanes state
+    for (srLevel = srLvlFirst; ; srLevel = pSrLane->gDn) {
+        pSrLane = pLanes + srLevel;
+        pSrLane->DEStateReset();
+        pSrLane->TouchReset();
+        pSrLane->XferReset();
+        pSrLane->touchEndBit = Set32::IdxToMask(pSrLane->entCnt);
+        if (srLevel >= srLvlLast)
+            break;
+    }
+
+    srLevel = srLvlFirst;
+    pSrLane = pLanes + srLvlFirst;
+    pSrLane->AdvInit();
+
+    // Initialize all up branches in all entries
+    GEntry* pLim = pEntries + blankCnt;
+    for (GEntry* pEnt = pEntries; pEnt < pLim; pEnt++)
+        pEnt->InitSearchState();
+
+    // Initialize search lane table
+    ChkLdr.Init(gLevelMax, pEntries, pLanes, srType);
+    RngTrack.Init(&cout);
+    DEActiveReset();
+    SearchDEInspInit();
+
+    // Name
+    switch (srType) {
+    case SRCHSTD:
+        srTypeName = "STD SEARCH";
+        break;
+    case SRCHLADR:
+        srTypeName = "LADDER SEARCH";
+        break;
+    case SRCHDEST:
+        srTypeName = "DESTATE SEARCH";
+        break;
+    default:
+        cerr << "Bad search type" << endl;
+        exit(1);
+    }
+    if (DbgSt.reportSearch)
+        RepEndl(srTypeName.c_str());
+
+    if (blankCnt <= 0 || (srLevel < srLvlFirst)) {
+        // No blanks matrix
+        Publish();
+        if (srLevel < srLvlFirst) {
+            RepEndl("EMPTY MATRIX");
+        }
+        return false;
+    }
+    return true;
+}
+
+bool GEnv::SearchUp()
+{
+    if (srLevel <= srLvlFirst)
+        // End of search
+        return false;
+
+    int advCnt = pSrLane->advPerms;
+    srLevel = pSrLane->gUp;
+    pSrLane = pLanes + srLevel;
+    if (DbgSt.DmpTrace()) {
+        ReportDec();
+        Report("UP to lvl / advPerms", srLevel, advCnt);
+    }
+    return true;
+}
 
 int GEnv::SearchLadder()
 {
     int watchCnt = 0;
 
-    if (!SearchInit())
+    if (!SearchInit(SRCHLADR))
         return srCnt;
-
-    if (DbgSt.reportSearch)
-        RepEndl("LADDER SEARCH");
 
     for (; ; ) {
         if (DbgSt.DmpTrace())
@@ -79,97 +571,20 @@ int GEnv::SearchLadder()
                 }
             }
             // Continue to level down (or success!)
-            if (! SearchDn())
+            if (!SearchDn())
                 // Success, with limit reached
                 break;
-       }
+        }
         else {
             // No valid perm left in lane
             if (!SearchUpLdrStep())
-            //if (!SearchUpLdr())
+                //if (!SearchUpLdr())
                 break;
         }
     }
 
-    SearchEnd("END OF LADDER SEARCH ");
+    SearchEnd();
     return srCnt;
-}
-
-// Initialize GEnv
-// Returns false if matrix has no blanks
-//
-bool GEnv::SearchInit()
-{
-    srCnt = 0;
-    srHash = 0;
-    deCnt = 0;
-    srLevel = srLvlFirst;
-    pSrLane = pLanes + srLvlFirst;
-    pSrLane->AdvInit();
-    pSrLane->DeadEndStateReset();
-
-    // Initialize all up branches in all entries
-    GEntry* pLim = pEntries + blankCnt;
-    for (GEntry* pEnt = pEntries; pEnt < pLim; pEnt++)
-        pEnt->InitSearchState();
-
-    // Initialize search lane table
-    ChkLdr.Init(gLevelMax, pEntries, pLanes);
-    RngTrack.Init(&cout);
-
-    if (blankCnt <= 0 || (srLevel < srLvlFirst)) {
-        // No blanks matrix
-        Publish();
-        if (srLevel < srLvlFirst) {
-            Report("EMPTY MATRIX");
-            RepEndl();
-        }
-        return false;
-    }
-    return true;
-}
-
-bool GEnv::SearchUp()
-{
-    if (srLevel <= srLvlFirst)
-        // End of search
-        return false;
-
-    int advCnt = pSrLane->advPerms;
-    srLevel = pSrLane->gUp;
-    pSrLane = pLanes + srLevel;
-    if (DbgSt.DmpTrace()) {
-        ReportDec();
-        Report("UP to lvl / advPerms", srLevel, advCnt);
-    }
-    return true;
-}
-
-// Lane has a valid perm
-bool GEnv::SearchDn()
-{
-    if (srLevel >= srLvlLast) {
-        // Found a solution
-        Publish();
-        if (!SearchUpSuccess())
-            // Search limit reached
-            return false;
-        else
-            // Will continue searching
-            return true;
-    }
- 
-    // Go down
-    srLevel = pSrLane->gDn;
-    pSrLane = pLanes + srLevel;
-    pSrLane->AdvInit();
-    pSrLane->DeadEndStateReset();
-
-    if (DbgSt.DmpTrace()) {
-        ReportDec();
-        Report("DOWN TO ", srLevel);
-    }
-    return true;
 }
 
 // Back Jump when pSrLane has dead ended
@@ -181,6 +596,7 @@ void GEnv::SearchBackJump()
     assert(bjLvl != GEnvGeom::GLVLNULL);        // We just inserted predecessors!
 
     if (DbgSt.DmpTrace()) {
+        DumpInsCnt();
         ReportDec();
         Report("BACKJUMP from / to", srLevel, bjLvl);
     }
@@ -212,6 +628,7 @@ bool GEnv::SearchCheckDeadEnds(s8 fromLvl)
     pChkLane->AdvInit(false);
 
     if (DbgSt.DmpTrace()) {
+        DumpInsCnt();
         Rep("  >>> CHECK DE at lvl ");
         ReportDec();
         Rep(srLevel);
@@ -288,6 +705,7 @@ bool GEnv::SearchUpLdr()
         // Move up to first entry in ChkLdr 
         climbLvl = ChkLdr.MoveUp(srLevel);
         if (DbgSt.DmpTrace()) {
+            DumpInsCnt();
             ReportDec();
             Report("BACKJUMP from / to", srLevel, climbLvl);
         }
@@ -371,6 +789,7 @@ bool GEnv::SearchUpSuccess()
     srLevel = pSrLane->gUp;
     pSrLane = pLanes + srLevel;
     if (DbgSt.DmpTrace()) {
+        DumpInsCnt();
         ReportDec();
         Report("  ++ SUCCESS to lvl / advPerms", srLevel, advCnt);
     }
@@ -417,6 +836,7 @@ void GEnv::SearchDump()
         Report(" BAD RESULT");
 
     if (DbgSt.reportSearch) {
+        DumpInsCnt();
         RngTrack.StepsCnt();
         ReportDec();
         Rep(" RESULT # hash steps ms deCnt ");
@@ -427,16 +847,17 @@ void GEnv::SearchDump()
         Rep(RngTrack.totalSteps, 17);
         Rep((int)RngTrack.ms);
         Rep(deCnt);
+        RepEndl();
         if (DbgSt.DmpResult())
             LogClient::Dump(DUMPRSLT);
-        RepEndl();
     }
 }
 
-void GEnv::SearchEnd(const char *sname)
+void GEnv::SearchEnd()
 {
     if (DbgSt.reportSearch) {
-        Rep(sname);
+        DumpInsCnt();
+        Rep(srTypeName);
         Rep("  solutions: ");
         ReportDec();
         Rep(srCnt);
@@ -697,6 +1118,7 @@ void GEnv::CompleteLinks(s8 lvl)
         if (upEdLvl >= 0) {
             // Up entry within square
             pUpEnt = (GEntry*)pEdgeLane->NStack[upEdLvl].pEnt;
+            pEnt->pUpEdge = pUpEnt;
             upIdx = pUpEnt->gIdx;
             if (maxIdx < upIdx) {
                 pLane->targLast++;
@@ -708,6 +1130,7 @@ void GEnv::CompleteLinks(s8 lvl)
         else {
             // Up entry outside of square: take maxIdx or GIDXNULL
             pEnt->tgIdx = maxIdx >= 0 ? pLane->targLast : GEntry::NULLTARGET;
+            pEnt->pUpEdge = NULL;
         }
     }
 
@@ -863,10 +1286,23 @@ u64 GEnv::Hash()
     return hash;
 }
 
+void GEnv::DumpInsCnt()
+{
+    if (DbgSt.Inspect()) {
+        ReportDec();
+        Rep("[");
+        Rep(insCnt, 6);
+        Rep("] ");
+    }
+}
+
 void GEnv::DumpTrace()
 {
     if (DbgSt.DmpExpand())
         RepEndl();
+
+    DumpInsCnt();
+
     Rep(pSrLane->pEntFirst->pLanePSet->searchId);
     Rep(" TRC LVL ");
     ReportDec();
@@ -917,6 +1353,7 @@ bool GLane::AdvInit(bool setLast)
         pAdv->StartPSet();
 
         advPerms = 0;
+        advRejCnt = 0;
         advDepth = 0;
         failDepth = -1;
         retDepth = -1;
@@ -995,64 +1432,6 @@ bool GLane::AdvPermComplete()
     }
 }
 
-#if 0
-// Extend AdvPerm() to reach advDepth == entCnt - 1
-//
-bool GLane::AdvPermExtend()
-{
-    if (advLast == entCnt - 1)
-        // Nothing to extend
-        return false;
-
-    advLast = entCnt - 1;
-    AdvDown(pAdv->laneDnBr);
-    return true;
-}
-
-bool GLane::AdvCheckDeadEnd()
-{
-    pAdv = pEntFirst;
-    pAdv->Stk.Reset();
-    pAdv->StartPSet();
-    advPerms = 0;
-    advDepth = 0;
-    retDepth = -1;
-
-    for (;;) {
-        if (!pAdv->Stk.IsEmpty()) {
-            pAdv->Pull();
-        }
-        else {
-            if (pAdv->IsExpanded() || !pAdv->Expand(retDepth)) {
-                // Failed at pAdv
-                if (advDepth <= 0) {
-                    // At top
-                    return false;
-                }
-                else {
-                    // Inside lane
-                    pAdv--;
-                    advDepth--;
-                    continue;
-                }
-            }
-        }
-
-        // Success for pAdv
-        //      Climb down
-        if (advDepth >= failDepth) {
-            // Reached previous fail point success
-            return true;
-        }
-        else
-            // Advance and propagate lane branch
-            AdvDown(pAdv->laneDnBr);
-    }
-
-    return false;
-}
-#endif
-
 // Move up in generation
 //
 bool GLane::AdvClimb()
@@ -1081,15 +1460,6 @@ void GLane::AdvDown(LvlBranch dnBr)
     // Propagate branch
     pAdv->laneUpBr = dnBr;
     pAdv->Stk.Reset();
-}
-
-// Propagate branch after gLane
-//
-void GLane::AdvSuccess(LvlBranch afterDnBr)
-{
-    advPerms++;
-    if (pEntAfter != nullptr && (advDepth == entCnt - 1))
-        pEntAfter->edgeUpBr = afterDnBr;
 }
 
 /////////////////////////////////////////////////////////////////////////

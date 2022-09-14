@@ -109,6 +109,16 @@ class Set16 {
 public:
 	Set16() {}
 
+	static inline u16 IdxToMask(int idx) { return (u16)(1 << idx); }
+
+	static inline void SetIdx(u16& mask, int idx) {
+		mask |= IdxToMask(idx);
+	}
+
+	static inline void UnSetIdx(u16& mask, int idx) {
+		mask &= ~IdxToMask(idx);
+	}
+
 	static inline u16 GetFirst(u16 mask) {
 		return mask & (~mask + 1);
 	}
@@ -129,11 +139,33 @@ public:
 		mask &= ~m;
 		return __popcnt16(m - 1);
 	}
+
+	static inline int GetLastIdx(u16 mask) {
+		u32 idx;
+		if (_BitScanReverse(&idx, mask))
+			return 32;
+		else
+			return (int) idx;
+	}
 };
 
 class Set32 {
 public:
 	Set32() {}
+
+	static inline u32 IdxToMask(int idx) { return (u32)(1 << idx); }
+
+	static inline bool IdxBelongs(u32 mask, int idx) {
+		return (mask & IdxToMask(idx)) != 0;
+	}
+
+	static inline void SetIdx(u32& mask, int idx) {
+		mask |= IdxToMask(idx);
+	}
+
+	static inline void ResetIdx(u32& mask, int idx) {
+		mask &= ~IdxToMask(idx);
+	}
 
 	static inline u32 GetFirst(u32 mask) {
 		return mask & (~mask + 1);
@@ -154,6 +186,14 @@ public:
 		u32 m = mask & (~mask + 1);
 		mask &= ~m;
 		return __popcnt(m - 1);
+	}
+
+	static inline int GetLastIdx(u32 mask) {
+		u32 idx;
+		if (! _BitScanReverse(&idx, mask))
+			return -1;
+		else
+			return (int)idx;
 	}
 };
 

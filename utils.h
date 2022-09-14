@@ -24,8 +24,8 @@ public:
 	DebugState() : dumpExpand(0), dumpTrace(0), dumpRange(0),
 		dumpCompare(0), dumpTerm(0), dumpMakeSingle(0), dumpResult(0),
 		dumpLevel(DIMMAX * 2), watchLevel(INT_MAX), searchLim(INT_MAX),
-		noPotSort(true), lowPotFirst(true), doLadder(false), reportCreate(false),
-		reportSearch(false)
+		noPotSort(true), lowPotFirst(true), doLadder(0), reportCreate(false),
+		reportSearch(false), inspect(-1)
 	{
 		pOut = &cout;
 		watchLevel = 36;
@@ -48,9 +48,10 @@ public:
 	// Params
 	bool noPotSort;
 	bool lowPotFirst;
-	bool doLadder;
+	int doLadder;
 	bool reportCreate;
 	bool reportSearch;
+	int inspect;
 
 public:
 	ostream* pOut;
@@ -75,6 +76,10 @@ public:
 	Counter DmpResult() { return dumpResult > 0 ? dumpResult-- : 0; }
 	Counter SearchLim() { return searchLim > 0 ? --searchLim : 0; }
 
+	bool Inspect() { return inspect >= 0; }
+	bool InspectCollect() { return inspect == 2; }
+	bool InspectPause() { return inspect >= 1; }
+
 	bool Set(string& par0, int cnt) {
 		if (par0 == "exp") {
 			dumpExpand = cnt;
@@ -92,7 +97,7 @@ public:
 			dumpCompare = cnt;
 		}
 		else if (par0 == "ladder") {
-			doLadder = (cnt > 0);
+			doLadder = cnt;
 		}
 		else if (par0 == "term") {
 			dumpTerm = cnt;
@@ -111,6 +116,9 @@ public:
 		}
 		else if (par0 == "reportsearch") {
 			reportSearch = true;
+		}
+		else if (par0 == "inspect") {
+			inspect = cnt;
 		}
 		else {
 			cerr << " DEBUG bad param " << par0 << endl;
