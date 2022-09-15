@@ -959,7 +959,7 @@ public:
 	long long searchIdx;
 	const int searchIdxPeriod = 1000000;
 	//const int dumpFreq = 10;
-	int dumpFreq = 1;
+	int dumpFreq = 50;
 	void Init(ostream* _pOutRep = nullptr) {
 		pOutRep = (_pOutRep == nullptr) ? &cout : _pOutRep;
 		searchIdx = 0;

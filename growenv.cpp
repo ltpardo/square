@@ -207,13 +207,23 @@ bool GEnv::SearchUpDEState()
     srLevel = pSrLane->gUp;
     pSrLane = pLanes + srLevel;
 
-#define SKIPLADDER
+//#define SKIPLADDER
 #ifdef SKIPLADDER
     if (DEActiveOn() /* && pSrLane->AdvDeadEnd() */) {
+        s8 upLevel = srLevel;
+        GLane* pUpLane = pSrLane;
         // Skip untouched lanes
-        while (!pSrLane->Touched()) {
-            srLevel = pSrLane->gUp;
-            pSrLane = pLanes + srLevel;
+        while (!pUpLane->Touched()) {
+            upLevel = pUpLane->gUp;
+            pUpLane = pLanes + upLevel;
+            if (upLevel < 0) {
+                cerr << " SKIP ABOVE REACHES TOP" << endl;
+                break;
+            }
+        }
+        if (upLevel >= 0) {
+            srLevel = upLevel;
+            pSrLane = pUpLane;
         }
     }
 #endif SKIPLADDER
