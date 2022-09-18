@@ -957,9 +957,9 @@ public:
 	int lvlTotal;
 	int period;
 	long long searchIdx;
-	const int searchIdxPeriod = 1000000;
+	const int searchIdxPeriod = 10000000;
 	//const int dumpFreq = 10;
-	int dumpFreq = 50;
+	int dumpFreq = 1;
 	void Init(ostream* _pOutRep = nullptr) {
 		pOutRep = (_pOutRep == nullptr) ? &cout : _pOutRep;
 		searchIdx = 0;

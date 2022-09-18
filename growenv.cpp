@@ -204,14 +204,11 @@ bool GEnv::SearchUpDEState()
         pSrLane->XferAbove(0, pSrLane->xferLast, true);
     }
 
-    srLevel = pSrLane->gUp;
-    pSrLane = pLanes + srLevel;
-
-//#define SKIPLADDER
+#define SKIPLADDER
 #ifdef SKIPLADDER
-    if (DEActiveOn() /* && pSrLane->AdvDeadEnd() */) {
-        s8 upLevel = srLevel;
-        GLane* pUpLane = pSrLane;
+    if (DEActiveOn() && pSrLane->AdvDeadEnd()) {
+        s8 upLevel = pSrLane->gUp;
+        GLane* pUpLane = pLanes + upLevel;
         // Skip untouched lanes
         while (!pUpLane->Touched()) {
             upLevel = pUpLane->gUp;
@@ -225,6 +222,10 @@ bool GEnv::SearchUpDEState()
             srLevel = upLevel;
             pSrLane = pUpLane;
         }
+    }
+    else {
+        srLevel = pSrLane->gUp;
+        pSrLane = pLanes + srLevel;
     }
 #endif SKIPLADDER
 
