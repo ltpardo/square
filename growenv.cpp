@@ -222,6 +222,10 @@ bool GEnv::SearchUpDEState()
             srLevel = upLevel;
             pSrLane = pUpLane;
         }
+        else {
+            srLevel = pSrLane->gUp;
+            pSrLane = pLanes + srLevel;
+        }
     }
     else {
         srLevel = pSrLane->gUp;
