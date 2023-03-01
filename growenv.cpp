@@ -202,11 +202,13 @@ bool GEnv::SearchUpDEState()
         // Lane was touched or dead ended: transfer touches above
         pSrLane->XferCountFromMask();
         pSrLane->XferAbove(0, pSrLane->xferLast, true);
+        //pSrLane->XferAbove(0, pSrLane->advLast, true);
     }
 
 #define SKIPLADDER
 #ifdef SKIPLADDER
     if (DEActiveOn() && pSrLane->AdvDeadEnd()) {
+    //if (DEActiveOn()) {
         s8 upLevel = pSrLane->gUp;
         GLane* pUpLane = pLanes + upLevel;
         // Skip untouched lanes

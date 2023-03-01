@@ -1142,6 +1142,24 @@ public:
 	int laneBlkCnt;
 	void BlankRowGen(int j);
 	void Blank(int blkCnt);
-	void Dump(ostream& out, const char *title, int m[DIMMAX][DIMMAX]);
+	void Dump(ostream& out, const char* title, int m[DIMMAX][DIMMAX]);
+	void Dump(ostream& out, const char* title, u8 m[DIMMAX][DIMMAX]);
+
+	const char blnkChar = '.';
+
+	char Encode(u8 v)
+	{
+		if (v < 0 || v > n)
+			return blnkChar;
+		else if (v < 10)
+			return v + '0';
+		else if (v < 36)
+			return v - 10 + 'a';
+		else if (v < 62)
+			return v - 36 + 'A';
+		return '*';
+	}
+
+	void SaveEncoded(ostream& out);
 };
 

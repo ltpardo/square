@@ -51,6 +51,21 @@ bool Consola::processCmd()
 	else if (Tokens[0] == "randgen") {
 		ProcessRandGen(Tokens[1], Tokens[2], Tokens[3], Tokens[4]);
 	}
+	else if (Tokens[0] == "randenc") {
+		if (tokenCnt <= 4)
+			Tokens[4] = "";
+		ProcessRandEnc(Tokens[1], Tokens[2], Tokens[3], Tokens[4]);
+	}
+	else if (Tokens[0] == "gad") {
+		if (tokenCnt <= 1)
+			Tokens[1] = "";
+		ProcessGad(Tokens[1]);
+	}
+	else if (Tokens[0] == "gadmod") {
+		if (tokenCnt <= 1)
+			Tokens[1] = "";
+		ProcessGadMod(Tokens[1]);
+	}
 	else if (Tokens[0] == "uniquermv") {
 		ProcessUniqueRmv(Tokens[1], Tokens[2]);
 	}
@@ -222,6 +237,72 @@ bool Consola::ProcessRandGen(string& id, string& dim, string& blkPerLane, string
 	SymTab.Add(id, SymType(SymType::TYPGENV), pGEnv, 0);
 
 	return pGEnv->GenRaw(n, tokToInt(blkPerLane), tokToInt(seed));
+}
+
+bool Consola::ProcessRandEnc(string& dim, string& blkPerLane, string& seed, string& fname)
+{
+	extern LatSqGen LSGen;
+	int n = tokToInt(dim);
+	int s = tokToInt(seed);
+	int blkCnt = tokToInt(blkPerLane);
+	if (s > 0)
+		LSGen.Seed(s);
+	LSGen.Gen(n);
+	LSGen.Blank(blkCnt);
+
+	if (fname == "") {
+		genFile = "genf_";
+		genFile += dim;
+		genFile += "_";
+		genFile += blkPerLane;
+		genFile += "_";
+		genFile += seed;
+	}
+	else
+		genFile = fname;
+
+	ofstream out(genFile);
+	if (!out.is_open()) {
+		cerr << "Can't open " << genFile << endl;
+		return false;
+	}
+	LSGen.SaveEncoded(out);
+	LSGen.Dump(cout, genFile.c_str(), LSGen.blk);
+	return true;
+}
+
+extern "C" void orig_main(int argc, FILE * fin);
+extern bool GadMod(int argc, FILE * fin);
+
+bool Consola::ProcessGad(string& fname)
+{
+	if (fname == "") {
+		fname = genFile;
+	}
+	FILE* fin;
+	fin = fopen(fname.c_str(), "r");
+	if (!fin) {
+		cerr << "Can't open " << fname << endl;
+		return false;
+	}
+
+	orig_main(1, fin);
+	return true;
+}
+
+bool Consola::ProcessGadMod(string& fname)
+{
+	if (fname == "") {
+		fname = genFile;
+	}
+	FILE* fin;
+	fin = fopen(fname.c_str(), "r");
+	if (!fin) {
+		cerr << "Can't open " << fname << endl;
+		return false;
+	}
+
+	return GadMod(1, fin);
 }
 
 bool Consola::ProcessTestChg(string& dim, string& blkPerLane, string& seedPar, string& cntPar)

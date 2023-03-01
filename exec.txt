@@ -1,0 +1,4 @@
+logopen cout
+randenc 31 11 1234
+gad
+gadmod

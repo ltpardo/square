@@ -144,10 +144,10 @@ void LatSqGen::Blank(int _laneBlkCnt)
 		BlankRowGen(j);
 	}
 
-	//Dump(cout, "BLANKED", blk);
+	Dump(cout, "BLANKED", blk);
 }
 
-void LatSqGen::Dump(ostream &out, const char* title, int m[DIMMAX][DIMMAX])
+void LatSqGen::Dump(ostream& out, const char* title, int m[DIMMAX][DIMMAX])
 {
 	out << endl << title << endl;
 	for (int i = 0; i < n; i++) {
@@ -157,6 +157,34 @@ void LatSqGen::Dump(ostream &out, const char* title, int m[DIMMAX][DIMMAX])
 				out << "  *";
 			else
 				out << setw(3) << m[i][j];
+		}
+		out << endl;
+	}
+}
+
+void LatSqGen::Dump(ostream& out, const char* title, u8 m[DIMMAX][DIMMAX])
+{
+	out << endl << title << endl;
+	for (int i = 0; i < n; i++) {
+		out << "[" << setw(2) << i << "] ";
+		for (int j = 0; j < n; j++) {
+			if (m[i][j] == BLKENT)
+				out << "  *";
+			else
+				out << setw(3) << (int) (m[i][j]);
+		}
+		out << endl;
+	}
+}
+
+void LatSqGen::SaveEncoded(ostream& out)
+{
+	for (int i = 0; i < n; i++) {
+		for (int j = 0; j < n; j++) {
+			if (blk[i][j] == BLKENT)
+				out << blnkChar;
+			else
+				out << Encode(blk[i][j] + 1);
 		}
 		out << endl;
 	}
